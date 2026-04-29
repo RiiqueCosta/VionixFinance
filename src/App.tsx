@@ -1320,13 +1320,19 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
 
   const addGoal = () => {
     if (!newGoal.title || !newGoal.targetAmount) return;
-    onAdd({
+    
+    const goalData: any = {
       title: newGoal.title!,
       targetAmount: Number(newGoal.targetAmount),
       currentAmount: Number(newGoal.currentAmount) || 0,
       category: newGoal.category || 'Geral',
-      deadline: newGoal.deadline
-    });
+    };
+
+    if (newGoal.deadline) {
+      goalData.deadline = newGoal.deadline;
+    }
+
+    onAdd(goalData);
     setIsAdding(false);
     setNewGoal({ title: '', targetAmount: 0, currentAmount: 0, category: 'Reserva' });
   };

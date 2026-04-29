@@ -1,24 +1,20 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Pillar 0: Global Deny
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Primitives
+    // --- PRIMITIVES & HELPERS ---
     function isSignedIn() { return request.auth != null; }
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
 
-    // User Profile
-    match /users/{userId}/{allPaths=**} {
-      allow read, write: if isOwner(userId);
-    }
-
-    // Transactions
-    match /transactions/{id} {
+    // --- TRANSACTIONS ---
+    match /transactions/{transactionId} {
       function isValidTransaction(data) {
         return data.userId == request.auth.uid
           && data.amount is number
@@ -26,50 +22,77 @@ service cloud.firestore {
           && data.date is string
           && (data.description is string && data.description.size() <= 500)
           && (data.category is string && data.category.size() <= 100)
-          && data.keys().hasAll(['userId', 'amount', 'type', 'description', 'category', 'date']);
+          && (data.note is string && data.note.size() <= 1000)
+          && (data.recurring is bool)
+          && data.keys().hasAll(['userId', 'amount', 'type', 'description', 'category', 'date', 'note', 'recurring', 'createdAt', 'updatedAt'])
+          && data.keys().size() == 10;
       }
 
-      // Secure list queries - evaluate based on resource data
-      allow list: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
-      allow get: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
       
       allow create: if isSignedIn() 
         && isValidTransaction(incoming())
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
       
       allow update: if isSignedIn() 
         && existing().userId == request.auth.uid 
         && isValidTransaction(incoming())
         && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time;
         
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // Goals
-    match /goals/{id} {
+    // --- GOALS ---
+    match /goals/{goalId} {
       function isValidGoal(data) {
+        let baseKeys = ['userId', 'title', 'targetAmount', 'currentAmount', 'category', 'createdAt', 'updatedAt'];
         return data.userId == request.auth.uid
           && data.title is string
+          && data.title.size() <= 200
           && data.targetAmount is number
           && data.currentAmount is number
-          && data.keys().hasAll(['userId', 'title', 'targetAmount', 'currentAmount']);
+          && (data.category is string && data.category.size() <= 100)
+          && (data.keys().hasAll(baseKeys))
+          && (data.keys().size() == 7 || (data.keys().size() == 8 && data.keys().hasAll(['deadline']) && data.deadline is string && data.deadline.size() <= 100));
       }
 
-      allow list: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
-      allow get: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
       
       allow create: if isSignedIn() 
         && isValidGoal(incoming())
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
       
       allow update: if isSignedIn() 
         && existing().userId == request.auth.uid 
-        && isValidGoal(incoming())
-        && incoming().userId == existing().userId
+        && (
+          // Action: Full Update (or details edit)
+          (isValidGoal(incoming()) && incoming().userId == existing().userId && incoming().createdAt == existing().createdAt) ||
+          // Action: Specific Progress Increment
+          (incoming().diff(existing()).affectedKeys().hasOnly(['currentAmount', 'updatedAt']))
+        )
         && incoming().updatedAt == request.time;
         
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- USER PROFILE & SETTINGS ---
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      
+      match /settings/data {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId) && incoming().updatedAt == request.time;
+      }
+      
+      match /{allPaths=**} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
     // Test connection
