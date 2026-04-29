@@ -8,7 +8,7 @@ console.log("Firebase config loaded:", !!firebaseConfig);
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Use initializeFirestore to set experimentalForceLongPolling, which is often required in iframe/proxy environments
+// Use initializeFirestore with standard settings for most stability
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  experimentalForceLongPolling: true
 }, firebaseConfig.firestoreDatabaseId);

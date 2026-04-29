@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   onAuthStateChanged, 
   signOut,
+  setPersistence,
+  browserLocalPersistence,
   User
 } from 'firebase/auth';
 import { 
@@ -51,24 +53,8 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  // Legacy global handler - simplified as we now use a state-based one in the App component
+  console.error('Firestore Error:', error);
 }
 import { 
   LineChart, 
@@ -158,6 +144,16 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
+  const handleFirestoreError = useCallback((error: any, operationType: OperationType, path: string | null) => {
+    const errInfo = {
+      error: error?.message || String(error),
+      operationType,
+      path,
+      userId: user?.uid
+    };
+    console.error('Firestore Error:', JSON.stringify(errInfo));
+  }, [user]);
+
   // Firestore Sync
   useEffect(() => {
     if (!user) {
@@ -214,31 +210,10 @@ export default function App() {
       unsubscribeGoals();
       unsubscribeSettings();
     };
-  }, [user]);
-
-  async function testConnection() {
-    try {
-      console.log("Checking Firestore status...");
-      const testDoc = doc(db, 'test', 'connection');
-      const snap = await getDoc(testDoc);
-      if (snap.exists()) {
-        console.log("Firestore: Connection established and test document found.");
-      } else {
-        console.log("Firestore: Connection established (test document not found, which is normal).");
-      }
-    } catch (error: any) {
-      // In some environments, the first check might report as 'offline' while the connection is being established.
-      // We only log as error if it seems persistent or critical.
-      if (error && error.message && error.message.includes('the client is offline')) {
-        console.warn("Firestore: Initial connection attempt suggests client is offline. This might be temporary.");
-      } else {
-        console.error("Firestore connectivity check failed:", error.message);
-      }
-    }
-  }
+  }, [user, handleFirestoreError]);
 
   useEffect(() => {
-    testConnection();
+    // Connection test removed as per request
   }, []);
 
   // Filters
@@ -356,6 +331,9 @@ export default function App() {
     setAuthError(null);
     setIsAuthSubmitting(true);
     try {
+      // Garante persistência da sessão
+      await setPersistence(auth, browserLocalPersistence);
+      
       if (authMode === 'signin') {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
@@ -396,8 +374,21 @@ export default function App() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-dark flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-dark flex flex-col items-center justify-center p-6 text-center">
+        <motion.div 
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-black text-3xl text-white shadow-2xl mb-8"
+        >
+          V
+        </motion.div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-bold tracking-tight">Vionix Finance</h2>
+          <p className="text-v-muted text-sm font-mono flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+            Sincronizando ambiente seguro...
+          </p>
+        </div>
       </div>
     );
   }
