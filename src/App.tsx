@@ -553,8 +553,14 @@ export default function App() {
               <Menu className="w-5 h-5" />
             </button>
             <div className="min-w-0">
-              <p className="v-eyebrow truncate">
+              <p className="v-eyebrow truncate flex items-center gap-2">
                 {currentPage === 'dashboard' ? 'Visão Geral' : 'Controle'}
+                {user && (
+                  <>
+                    <span className="w-1 h-1 rounded-full bg-v-border" />
+                    <span className="text-secondary lowercase font-bold">{user.email}</span>
+                  </>
+                )}
               </p>
               <h1 className="text-xl md:text-2xl font-black tracking-tighter capitalize truncate">
                 {currentPage === 'dashboard' ? 'Dashboard Financeiro' : 
@@ -685,6 +691,51 @@ function NavBtn({ active, children, onClick }: { active: boolean, children: Reac
 }
 
 function DashboardView({ summary, transactions, allTransactions, selectedMonth, goals }: { summary: any, transactions: Transaction[], allTransactions: Transaction[], selectedMonth: Date, goals: FinancialGoal[] }) {
+  const { growthData, monthlyGoalData, statsComparison } = useMemo(() => {
+    // Current Period
+    const currentProfit = summary.receita - summary.totalDespesa;
+    
+    // Previous Period
+    const prevMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1);
+    const prevMonthTxs = allTransactions.filter(tx => isSameMonth(parseISO(tx.date), prevMonth));
+    const prevReceita = prevMonthTxs.filter(t => t.type === 'receita').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const prevDespesa = prevMonthTxs.filter(t => t.type !== 'receita').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const prevProfit = prevReceita - prevDespesa;
+
+    // Growth calculation
+    let growth = 0;
+    if (prevProfit !== 0) {
+      growth = ((currentProfit - prevProfit) / Math.abs(prevProfit)) * 100;
+    } else if (currentProfit > 0) {
+      growth = 100;
+    }
+
+    // Monthly Goal calculation (using first goal or default)
+    const activeGoal = goals[0];
+    const goalPercent = activeGoal ? Math.min(100, (activeGoal.currentAmount / activeGoal.targetAmount) * 100) : 0;
+    const goalText = activeGoal ? `${fmt(activeGoal.currentAmount)} de ${fmt(activeGoal.targetAmount)}` : 'Nenhuma meta definida';
+
+    // Stats comparisons
+    const revDiff = prevReceita === 0 ? 100 : ((summary.receita - prevReceita) / prevReceita) * 100;
+    const expDiff = prevDespesa === 0 ? 100 : ((summary.totalDespesa - prevDespesa) / prevDespesa) * 100;
+
+    return {
+      growthData: {
+        value: growth,
+        isPositive: growth >= 0
+      },
+      monthlyGoalData: {
+        percent: goalPercent,
+        text: goalText,
+        title: activeGoal ? activeGoal.title : 'Meta Mensal'
+      },
+      statsComparison: {
+        rev: revDiff,
+        exp: expDiff
+      }
+    };
+  }, [summary, allTransactions, selectedMonth, goals]);
+
   const chartData = useMemo(() => {
     const months = eachMonthOfInterval({
       start: startOfYear(selectedMonth),
@@ -718,8 +769,13 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
           <p className="text-v-muted text-sm md:text-base max-w-md">Seu dinheiro organizado com inteligência, clareza e controle total.</p>
         </div>
         <div className="z-10 p-5 md:p-6 rounded-[22px] bg-success/10 border border-success/20 flex flex-col items-center justify-center shrink-0 min-w-[180px] md:min-w-[200px]">
-          <span className="block text-success font-black text-3xl md:text-4xl tracking-tighter leading-none mb-1">▲ 18,7%</span>
-          <small className="text-v-muted font-bold uppercase text-[9px] md:text-[10px] tracking-widest leading-none">crescimento mensal</small>
+          <span className={cn(
+            "block font-black text-3xl md:text-4xl tracking-tighter leading-none mb-1",
+            growthData.isPositive ? "text-success" : "text-danger"
+          )}>
+            {growthData.isPositive ? '▲' : '▼'} {Math.abs(growthData.value).toFixed(1)}%
+          </span>
+          <small className="text-v-muted font-bold uppercase text-[9px] md:text-[10px] tracking-widest leading-none">lucratividade mensal</small>
         </div>
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <div className="absolute bottom-[-120px] right-[-90px] w-[300px] h-[300px] bg-secondary/10 blur-[100px] rounded-full" />
@@ -727,10 +783,31 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
 
       {/* Stats Grid */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Receitas" amount={summary.receita} subtext={`+ ${fmt(summary.receita * 0.1)} este mês`} variant="success" />
-        <StatCard title="Despesas" amount={summary.totalDespesa} subtext="- 8% comparado ao mês passado" variant="danger" />
-        <StatCard title="Meta mensal" amount={74} subtext="R$ 7.400 de R$ 10.000" variant="secondary" isPercentage />
-        <StatCard title="Economia" amount={summary.saldo > 0 ? summary.saldo : 0} subtext="reserva em construção" variant="warning" />
+        <StatCard 
+          title="Receitas" 
+          amount={summary.receita} 
+          subtext={`${statsComparison.rev >= 0 ? '+' : ''}${statsComparison.rev.toFixed(1)}% que o mês anterior`} 
+          variant="success" 
+        />
+        <StatCard 
+          title="Despesas" 
+          amount={summary.totalDespesa} 
+          subtext={`${statsComparison.exp >= 0 ? '+' : ''}${statsComparison.exp.toFixed(1)}% vs mês passado`} 
+          variant="danger" 
+        />
+        <StatCard 
+          title={monthlyGoalData.title} 
+          amount={Math.round(monthlyGoalData.percent)} 
+          subtext={monthlyGoalData.text} 
+          variant="secondary" 
+          isPercentage 
+        />
+        <StatCard 
+          title="Saldo Líquido" 
+          amount={summary.saldo} 
+          subtext="performance do período" 
+          variant={summary.saldo >= 0 ? "warning" : "danger"} 
+        />
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

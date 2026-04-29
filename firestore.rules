@@ -1,36 +1,79 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // Pillar 0: Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper to check if user is signed in
-    function isSignedIn() {
-      return request.auth != null;
+    // Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Pillar 1: User data
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      
+      match /settings/data {
+        allow read, write: if isOwner(userId);
+      }
+      
+      match /{allPaths=**} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
-    // Rule for transactions: users can only read/write their own data
-    match /transactions/{id} {
-      allow read, write: if isSignedIn() 
-        && (resource == null || resource.data.userId == request.auth.uid)
-        && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    // Pillar 2 & 8: Transactions
+    match /transactions/{transactionId} {
+      function isValidTransaction(data) {
+        return data.userId == request.auth.uid
+          && data.amount is number
+          && data.type in ['receita', 'fixa', 'variavel']
+          && data.date is string
+          && data.keys().hasAll(['userId', 'amount', 'type', 'description', 'category', 'date']);
+      }
+
+      // Secure list queries
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      // Get document
+      allow get: if isSignedIn() && (resource == null || existing().userId == request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      
+      allow update: if isSignedIn() 
+        && existing().userId == request.auth.uid 
+        && isValidTransaction(incoming())
+        && incoming().userId == existing().userId;
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // Rule for goals: users can only read/write their own data
-    match /goals/{id} {
-      allow read, write: if isSignedIn() 
-        && (resource == null || resource.data.userId == request.auth.uid)
-        && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    // Pillar 2 & 8: Goals
+    match /goals/{goalId} {
+      function isValidGoal(data) {
+        return data.userId == request.auth.uid
+          && data.title is string
+          && data.targetAmount is number
+          && data.currentAmount is number
+          && data.keys().hasAll(['userId', 'title', 'targetAmount', 'currentAmount']);
+      }
+
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource == null || existing().userId == request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidGoal(incoming());
+      
+      allow update: if isSignedIn() 
+        && existing().userId == request.auth.uid 
+        && isValidGoal(incoming())
+        && incoming().userId == existing().userId;
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // Rule for user-specific data (settings, etc)
-    match /users/{userId}/{allPaths=**} {
-      allow read, write: if isSignedIn() && request.auth.uid == userId;
-    }
-    
-    // Test connection path
+    // Test connection
     match /test/connection {
       allow read: if true;
     }

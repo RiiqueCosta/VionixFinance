@@ -1,26 +1,30 @@
-# Security Specification
+# Security Specification - Vionix Finance
 
-## Data Invariants
-1. A transaction must always belong to the authenticated user (`userId` match).
-2. A financial goal must always belong to the authenticated user.
-3. Users can only read their own data (no blanket reads).
-4. Timestamps (`createdAt`, `updatedAt`) must be strictly validated against `request.time`.
-5. Document IDs must be validated to prevent poisoning.
+## 1. Data Invariants
+- Every Transaction must belong to a User (`userId` matches owner).
+- Every Goal must belong to a User (`userId` matches owner).
+- Users can only access their own settings.
+- Dates and amounts must be well-formed.
+- Timestamps (`createdAt`, `updatedAt`) should be server-side validated where possible.
 
-## The "Dirty Dozen" Payloads (Test Cases)
+## 2. The "Dirty Dozen" Payloads (Malicious attempts)
+1. **Identity Spoofing**: Create transaction with `userId` of another user.
+2. **Settings Hijack**: Read `users/victim-id/settings/data`.
+3. **Ghost Fields**: Add `isVerified: true` to a transaction.
+4. **Negative Amount**: Set transaction `amount` to -999999.
+5. **Huge ID**: Use a 2MB string as document ID.
+6. **Bypass Verification**: Write data without `email_verified` (if required).
+7. **Cross-User Query**: Query `transactions` without `userId` filter.
+8. **Resource Exhaustion**: Write 1MB of junk into `description`.
+9. **Timestamp Spoofing**: Send a future `createdAt` from the client.
+10. **State Corruption**: Update someone else's goal `currentAmount`.
+11. **Orphaned Write**: Create a transaction for a non-existent user path.
+12. **PII Leak**: Read the whole `users` collection.
 
-1. **Identity Spoofing**: Attempt to create a transaction with `userId` of another user.
-2. **Identity Spoofing (Update)**: Attempt to change `userId` of an existing transaction.
-3. **Shadow Field Injection**: Adding `isAdmin: true` to a transaction.
-4. **ID Poisoning**: Using a 2KB string as a transaction ID.
-5. **Type Poisoning**: Sending `amount: "ten thousand"` (string) instead of a number.
-6. **Resource Exhaustion**: Sending a 1MB string in `description`.
-7. **Temporal Fraud**: Setting `createdAt` to a future date instead of `request.time`.
-8. **Malicious Update**: Changing `createdAt` of an existing transaction.
-9. **Relational Bypass**: Listing transactions without a `where` clause (rules must catch this).
-10. **State Shortcut**: Setting a goal's `currentAmount` to a negative value or non-number.
-11. **PII Leak**: Authenticated user trying to `get` another user's settings.
-12. **Unauthenticated Write**: Attempting to create a goal without being signed in.
-
-## Test Runner (Mock)
-(Tests would verify PERMISSION_DENIED for above cases)
+## 3. Anticipated Rule Structure
+- Global Deny
+- `isSignedIn()` helper
+- `isOwner(userId)` helper
+- `isValidTransaction(data)` helper
+- `isValidGoal(data)` helper
+- Strict `list` filters matching `resource.data.userId`
