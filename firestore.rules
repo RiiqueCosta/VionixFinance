@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Pillar 0: Safety Net
+    // Pillar 0: Global Deny
     match /{document=**} {
       allow read, write: if false;
     }
@@ -12,46 +12,42 @@ service cloud.firestore {
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
-    // Pillar 1: User data
-    match /users/{userId} {
-      allow get: if isOwner(userId);
-      
-      match /settings/data {
-        allow read, write: if isOwner(userId);
-      }
-      
-      match /{allPaths=**} {
-        allow read, write: if isOwner(userId);
-      }
+    // User Profile
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if isOwner(userId);
     }
 
-    // Pillar 2 & 8: Transactions
-    match /transactions/{transactionId} {
+    // Transactions
+    match /transactions/{id} {
       function isValidTransaction(data) {
         return data.userId == request.auth.uid
           && data.amount is number
           && data.type in ['receita', 'fixa', 'variavel']
           && data.date is string
+          && (data.description is string && data.description.size() <= 500)
+          && (data.category is string && data.category.size() <= 100)
           && data.keys().hasAll(['userId', 'amount', 'type', 'description', 'category', 'date']);
       }
 
-      // Secure list queries
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      // Get document
-      allow get: if isSignedIn() && (resource == null || existing().userId == request.auth.uid);
+      // Secure list queries - evaluate based on resource data
+      allow list: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
+      allow get: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
       
-      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow create: if isSignedIn() 
+        && isValidTransaction(incoming())
+        && incoming().createdAt == request.time;
       
       allow update: if isSignedIn() 
         && existing().userId == request.auth.uid 
         && isValidTransaction(incoming())
-        && incoming().userId == existing().userId;
+        && incoming().userId == existing().userId
+        && incoming().updatedAt == request.time;
         
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // Pillar 2 & 8: Goals
-    match /goals/{goalId} {
+    // Goals
+    match /goals/{id} {
       function isValidGoal(data) {
         return data.userId == request.auth.uid
           && data.title is string
@@ -60,15 +56,18 @@ service cloud.firestore {
           && data.keys().hasAll(['userId', 'title', 'targetAmount', 'currentAmount']);
       }
 
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow get: if isSignedIn() && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
+      allow get: if isSignedIn() && (existing() == null || existing().userId == request.auth.uid);
       
-      allow create: if isSignedIn() && isValidGoal(incoming());
+      allow create: if isSignedIn() 
+        && isValidGoal(incoming())
+        && incoming().createdAt == request.time;
       
       allow update: if isSignedIn() 
         && existing().userId == request.auth.uid 
         && isValidGoal(incoming())
-        && incoming().userId == existing().userId;
+        && incoming().userId == existing().userId
+        && incoming().updatedAt == request.time;
         
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }

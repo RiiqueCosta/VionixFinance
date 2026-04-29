@@ -567,7 +567,7 @@ export default function App() {
                  currentPage === 'anual' ? 'Visão Anual' : 
                  currentPage === 'graficos' ? 'Relatórios Financeiros' : 
                  currentPage === 'metas' ? 'Metas e Objetivos' : 
-                 currentPage.replace('s', 's de caixa')}
+                 currentPage.replace(/s$/, 's de caixa')}
               </h1>
             </div>
           </div>
@@ -616,7 +616,7 @@ export default function App() {
                 )}
                 {(currentPage === 'receitas' || currentPage === 'fixas' || currentPage === 'variaveis') && (
                   <TransactionListView 
-                    type={currentPage.replace('s', '') as TransactionType} 
+                    type={currentPage === 'variaveis' ? 'variavel' : currentPage.replace(/s$/, '') as TransactionType} 
                     transactions={monthlyTransactions} 
                     onEdit={(tx) => { setEditingTransaction(tx); setIsModalOpen(true); }}
                     onDelete={deleteTransaction}
