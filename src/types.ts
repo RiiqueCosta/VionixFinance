@@ -27,7 +27,7 @@ export interface CategoryMap {
 }
 
 export const DEFAULT_CATEGORIES: CategoryMap = {
-  receita: ['Clientes', 'Freelance', 'Investimentos', 'Suporte TI', 'Projetos', 'Outros'],
-  fixa: ['Aluguel', 'Internet', 'Servidores', 'Assinaturas', 'Seguros', 'Outros'],
-  variavel: ['Cartão Nubank', 'Alimentação', 'Transporte', 'Ferramentas', 'Viagens', 'Lazer', 'Outros']
+  receita: ['Salário', 'Clientes', 'Freelance', 'Investimentos', 'Suporte TI', 'Projetos', 'Outros'],
+  fixa: ['Salário', 'Aluguel', 'Internet', 'Servidores', 'Assinaturas', 'Seguros', 'Outros'],
+  variavel: ['Salário', 'Cartão Nubank', 'Alimentação', 'Transporte', 'Ferramentas', 'Viagens', 'Lazer', 'Outros']
 };

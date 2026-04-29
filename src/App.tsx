@@ -76,6 +76,8 @@ import { format, parseISO, startOfMonth, endOfMonth, eachMonthOfInterval, startO
 import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Transaction, TransactionType, DEFAULT_CATEGORIES, CategoryMap, FinancialGoal } from './types';
 import { 
   LayoutDashboard, 
@@ -107,14 +109,17 @@ import {
   Flag,
   Award,
   Clock,
+  MessageSquare,
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  Bell,
   PieChart as PieIcon
 } from 'lucide-react';
 // Utils
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-const fmt = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // --- Initial Data ---
 const MOCK_TRANSACTIONS: Transaction[] = [
@@ -143,6 +148,40 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [defaultTransactionType, setDefaultTransactionType] = useState<TransactionType | undefined>(undefined);
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [showValues, setShowValues] = useState(true);
+
+  const userName = useMemo(() => user?.displayName || user?.email || 'Usuário', [user]);
+
+  const fmt = useCallback((v: number) => {
+    if (!showValues) return 'R$ ••••••';
+    return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }, [showValues]);
+
+  const toggleValues = () => setShowValues(prev => !prev);
+
+  useEffect(() => {
+    // Load local preferences
+    const savedShowValues = localStorage.getItem('vionix_show_values');
+    if (savedShowValues !== null) setShowValues(savedShowValues === 'true');
+    
+    const savedTheme = localStorage.getItem('vionix_theme');
+    if (savedTheme) setTheme(savedTheme as 'light' | 'dark');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('vionix_show_values', showValues.toString());
+  }, [showValues]);
+
+  useEffect(() => {
+    localStorage.setItem('vionix_theme', theme);
+    if (theme === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  }, [theme]);
 
   const handleFirestoreError = useCallback((error: any, operationType: OperationType, path: string | null) => {
     const errInfo = {
@@ -374,7 +413,7 @@ export default function App() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-dark flex flex-col items-center justify-center p-6 text-center">
+      <div className="min-h-screen bg-v-bg flex flex-col items-center justify-center p-6 text-center transition-colors">
         <motion.div 
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -383,7 +422,7 @@ export default function App() {
           V
         </motion.div>
         <div className="space-y-2">
-          <h2 className="text-xl font-bold tracking-tight">Vionix Finance</h2>
+          <h2 className="text-xl font-bold tracking-tight text-v-text-primary">Vionix Finance</h2>
           <p className="text-v-muted text-sm font-mono flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
             Sincronizando ambiente seguro...
@@ -401,7 +440,7 @@ export default function App() {
             <div className="flex items-center gap-3 mb-6 md:mb-8">
               <div className="w-10 h-10 md:w-12 md:h-12 rounded-[15px] bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-black text-xl md:text-2xl text-white shadow-lg shadow-primary/35">V</div>
               <div>
-                <strong className="block text-xl md:text-2xl tracking-tighter leading-none">Vionix</strong>
+                <strong className="block text-xl md:text-2xl tracking-tighter leading-none text-v-text-primary">Vionix</strong>
                 <span className="text-secondary font-bold text-xs md:text-sm">Finance</span>
               </div>
             </div>
@@ -424,7 +463,7 @@ export default function App() {
                 <input 
                   type="email" 
                   placeholder="seuemail@exemplo.com" 
-                  className="w-full bg-white/5 border border-v-border rounded-[14px] p-3.5 md:p-4 text-[#E6E9F2] text-sm md:text-base outline-none focus:border-secondary transition-colors"
+                  className="w-full bg-white/5 border border-v-border rounded-[14px] p-3.5 md:p-4 text-v-text-primary text-sm md:text-base outline-none focus:border-secondary transition-colors"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -435,7 +474,7 @@ export default function App() {
                 <input 
                   type="password" 
                   placeholder="********" 
-                  className="w-full bg-white/5 border border-v-border rounded-[14px] p-3.5 md:p-4 text-[#E6E9F2] text-sm md:text-base outline-none focus:border-secondary transition-colors"
+                  className="w-full bg-white/5 border border-v-border rounded-[14px] p-3.5 md:p-4 text-v-text-primary text-sm md:text-base outline-none focus:border-secondary transition-colors"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -483,21 +522,21 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 z-[100] bg-dark/80 backdrop-blur-md lg:hidden" 
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md lg:hidden" 
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-[110] w-[280px] bg-[#070B16] border-r border-v-border transition-transform duration-300 backdrop-blur-xl lg:relative lg:translate-x-0 lg:z-0",
+        "fixed inset-y-0 left-0 z-[110] w-[280px] bg-v-bg border-r border-v-border transition-transform duration-300 backdrop-blur-xl lg:relative lg:translate-x-0 lg:z-0",
         isSidebarOpen ? "translate-x-0 shadow-2xl shadow-black/50" : "-translate-x-full"
       )}>
         <div className="flex flex-col h-full p-6">
           <div className="flex items-center gap-3 mb-10">
             <div className="w-11 h-11 rounded-[15px] bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-black text-xl text-white shadow-[0_10px_35px_rgba(108,75,255,0.35)]">V</div>
             <div>
-              <strong className="block text-xl tracking-tighter leading-none">Vionix</strong>
+              <strong className="block text-xl tracking-tighter leading-none text-v-text-primary">Vionix</strong>
               <span className="text-secondary font-bold text-xs uppercase tracking-wider">Finance</span>
             </div>
           </div>
@@ -526,18 +565,23 @@ export default function App() {
             </NavBtn>
           </nav>
 
-          <div className="mt-8 p-5 v-panel bg-gradient-to-br from-primary/20 to-secondary/10">
-            <p className="text-v-muted text-[11px] font-bold uppercase tracking-widest mb-1">Plano atual</p>
-            <strong className="block text-sm mb-4 font-extrabold">Vionix Pro</strong>
-            <button className="v-btn-primary w-full py-2.5 text-xs">Atualizar plano</button>
+          <div className="mt-8 pt-4 border-t border-v-border space-y-2">
+            <a 
+              href={`https://wa.me/5511985258655?text=${encodeURIComponent('Olá, vim do sistema financeiro Lori TI e gostaria de suporte.')}`}
+              target="_blank" 
+              rel="noreferrer"
+              className="flex items-center w-full gap-3 px-4 py-3 text-xs font-black uppercase tracking-widest text-secondary hover:bg-secondary/10 rounded-xl transition-all"
+            >
+              <MessageSquare className="w-4 h-4" /> Suporte Lori TI
+            </a>
+            
+            <button 
+              onClick={handleLogout}
+              className="flex items-center w-full gap-3 px-4 py-3 text-xs font-black uppercase tracking-widest text-v-muted hover:text-danger hover:bg-danger/5 rounded-xl transition-all"
+            >
+              <LogOut className="w-4 h-4" /> Sair
+            </button>
           </div>
-
-          <button 
-            onClick={handleLogout}
-            className="flex items-center w-full gap-3 px-4 py-3 mt-6 text-sm font-bold text-v-muted hover:text-white rounded-xl transition-colors hover:bg-white/5"
-          >
-            <LogOut className="w-4 h-4" /> Sair
-          </button>
         </div>
       </aside>
 
@@ -548,7 +592,7 @@ export default function App() {
           <div className="flex items-center gap-4">
             <button 
               onClick={() => setIsSidebarOpen(true)}
-              className="p-2 text-white bg-white/5 border border-v-border rounded-[12px] lg:hidden"
+              className="p-2 text-v-text-primary bg-white/5 border border-v-border rounded-[12px] lg:hidden"
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -572,27 +616,43 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+    <div className="flex items-center gap-2 sm:gap-3">
+            <button 
+              onClick={toggleValues}
+              className="p-3 text-v-muted hover:text-v-text-primary bg-white/10 border border-v-border rounded-[14px] transition-all"
+              title={showValues ? "Ocultar valores" : "Mostrar valores"}
+            >
+              {showValues ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            </button>
+
             <div className="flex-1 sm:flex-none flex items-center bg-white/5 border border-v-border rounded-[14px] p-1 shadow-inner max-w-[180px] sm:max-w-none">
               <button 
                 onClick={() => setSelectedMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
-                className="p-1.5 sm:p-2 hover:bg-white/5 rounded-[12px] text-v-muted hover:text-white transition-all"
+                className="p-1.5 sm:p-2 hover:bg-white/5 rounded-[12px] text-v-muted hover:text-v-text-primary transition-all"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <div className="flex-1 px-2 text-[10px] sm:text-xs font-black uppercase tracking-widest text-center whitespace-nowrap">
+              <div className="flex-1 px-2 text-[10px] sm:text-xs font-black uppercase tracking-widest text-v-text-primary text-center whitespace-nowrap">
                 {format(selectedMonth, 'MMM yyyy', { locale: ptBR })}
               </div>
               <button 
                 onClick={() => setSelectedMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
-                className="p-1.5 sm:p-2 hover:bg-white/5 rounded-[12px] text-v-muted hover:text-white transition-all"
+                className="p-1.5 sm:p-2 hover:bg-white/5 rounded-[12px] text-v-muted hover:text-v-text-primary transition-all"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
             
             <button 
-              onClick={() => { setEditingTransaction(null); setIsModalOpen(true); }}
+              onClick={() => { 
+                setEditingTransaction(null); 
+                let type: TransactionType | undefined = undefined;
+                if (currentPage === 'receitas') type = 'receita';
+                if (currentPage === 'fixas') type = 'fixa';
+                if (currentPage === 'variaveis') type = 'variavel';
+                setDefaultTransactionType(type);
+                setIsModalOpen(true); 
+              }}
               className="v-btn-primary shrink-0 px-3 py-2 sm:px-4 sm:py-2.5"
             >
               <Plus className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Nova transação</span>
@@ -612,7 +672,7 @@ export default function App() {
                 transition={{ duration: 0.3 }}
               >
                 {currentPage === 'dashboard' && (
-                  <DashboardView summary={summary} transactions={monthlyTransactions} allTransactions={transactions} selectedMonth={selectedMonth} goals={goals} />
+                  <DashboardView summary={summary} transactions={monthlyTransactions} allTransactions={transactions} selectedMonth={selectedMonth} goals={goals} fmt={fmt} />
                 )}
                 {(currentPage === 'receitas' || currentPage === 'fixas' || currentPage === 'variaveis') && (
                   <TransactionListView 
@@ -620,16 +680,26 @@ export default function App() {
                     transactions={monthlyTransactions} 
                     onEdit={(tx) => { setEditingTransaction(tx); setIsModalOpen(true); }}
                     onDelete={deleteTransaction}
+                    fmt={fmt}
+                    userName={userName}
+                    selectedMonth={selectedMonth}
                   />
                 )}
                 {currentPage === 'anual' && (
-                  <AnnualView transactions={transactions} selectedYear={selectedMonth.getFullYear()} />
+                  <AnnualView transactions={transactions} selectedYear={selectedMonth.getFullYear()} fmt={fmt} userName={userName} />
                 )}
                 {currentPage === 'metas' && (
-                  <GoalsView goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} />
+                  <GoalsView goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} fmt={fmt} />
                 )}
                 {currentPage === 'config' && (
-                  <SettingsView categories={categories} onUpdate={updateCategories} />
+                  <SettingsView 
+                    categories={categories} 
+                    onUpdate={updateCategories} 
+                    theme={theme} 
+                    onThemeChange={setTheme} 
+                    showValues={showValues}
+                    onToggleValues={() => setShowValues(!showValues)}
+                  />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -646,13 +716,13 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="fixed inset-0 bg-dark/80 backdrop-blur-md"
+              className="fixed inset-0 bg-black/60 backdrop-blur-md"
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.9, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="relative w-full max-w-lg v-panel bg-dark-2 overflow-y-auto max-h-[90vh] custom-scrollbar"
+              className="relative w-full max-w-lg v-panel overflow-y-auto max-h-[90vh] custom-scrollbar"
             >
               <TransactionForm 
                 onClose={() => setIsModalOpen(false)} 
@@ -662,6 +732,7 @@ export default function App() {
                   setIsModalOpen(false);
                 }}
                 initialData={editingTransaction}
+                defaultType={defaultTransactionType}
                 categories={categories}
               />
             </motion.div>
@@ -674,15 +745,16 @@ export default function App() {
 
 // --- Sub-Components ---
 
-function NavBtn({ active, children, onClick }: { active: boolean, children: React.ReactNode, onClick: () => void }) {
+function NavBtn({ active, children, onClick, id }: { active: boolean, children: React.ReactNode, onClick: () => void, id?: string }) {
   return (
     <button 
+      id={id}
       onClick={onClick}
       className={cn(
         "flex items-center w-full gap-3 px-4 py-3.5 text-[15px] font-semibold transition-all rounded-[15px]",
         active 
-          ? "bg-gradient-to-br from-primary/20 to-secondary/10 text-white border border-v-border shadow-lg" 
-          : "text-v-muted hover:text-white hover:bg-white/5"
+          ? "bg-gradient-to-br from-primary to-secondary text-white border-none shadow-[0_10px_25px_rgba(108,75,255,0.4)]" 
+          : "text-v-muted hover:text-v-text-primary hover:bg-white/5"
       )}
     >
       {children}
@@ -690,7 +762,7 @@ function NavBtn({ active, children, onClick }: { active: boolean, children: Reac
   );
 }
 
-function DashboardView({ summary, transactions, allTransactions, selectedMonth, goals }: { summary: any, transactions: Transaction[], allTransactions: Transaction[], selectedMonth: Date, goals: FinancialGoal[] }) {
+function DashboardView({ summary, transactions, allTransactions, selectedMonth, goals, fmt }: { summary: any, transactions: Transaction[], allTransactions: Transaction[], selectedMonth: Date, goals: FinancialGoal[], fmt: (v: number) => string }) {
   const { growthData, monthlyGoalData, statsComparison } = useMemo(() => {
     // Current Period
     const currentProfit = summary.receita - summary.totalDespesa;
@@ -788,12 +860,14 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
           amount={summary.receita} 
           subtext={`${statsComparison.rev >= 0 ? '+' : ''}${statsComparison.rev.toFixed(1)}% que o mês anterior`} 
           variant="success" 
+          fmt={fmt}
         />
         <StatCard 
           title="Despesas" 
           amount={summary.totalDespesa} 
           subtext={`${statsComparison.exp >= 0 ? '+' : ''}${statsComparison.exp.toFixed(1)}% vs mês passado`} 
           variant="danger" 
+          fmt={fmt}
         />
         <StatCard 
           title={monthlyGoalData.title} 
@@ -801,12 +875,14 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
           subtext={monthlyGoalData.text} 
           variant="secondary" 
           isPercentage 
+          fmt={fmt}
         />
         <StatCard 
           title="Saldo Líquido" 
           amount={summary.saldo} 
           subtext="performance do período" 
           variant={summary.saldo >= 0 ? "warning" : "danger"} 
+          fmt={fmt}
         />
       </section>
 
@@ -818,7 +894,7 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
               <p className="v-eyebrow">Performance</p>
               <h3 className="text-xl md:text-2xl font-black tracking-tighter">Fluxo financeiro</h3>
             </div>
-            <select className="w-full sm:w-auto bg-white/5 border border-v-border rounded-[12px] p-2 text-[10px] sm:text-xs font-black outline-none text-v-muted focus:text-white uppercase tracking-widest">
+            <select className="w-full sm:w-auto bg-white/5 border border-v-border rounded-[12px] p-2 text-[10px] sm:text-xs font-black outline-none text-v-muted focus:text-v-text-primary uppercase tracking-widest">
               <option>Últimos 12 meses</option>
               <option>Este ano</option>
             </select>
@@ -894,9 +970,7 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
             )}
           </div>
           <div className="mt-8 pt-6 border-t border-v-border">
-             <button className="v-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2">
-               Acessar Plano <ArrowUpRight className="w-3 h-3" />
-             </button>
+             {/* Pricing link removed as per request */}
           </div>
         </div>
       </div>
@@ -921,13 +995,13 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
                     {tx.type === 'receita' ? 'R' : 'D'}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-white truncate">{tx.description}</p>
+                    <p className="text-sm font-bold text-v-text-primary truncate">{tx.description}</p>
                     <p className="text-[10px] font-black text-v-muted uppercase tracking-widest">{tx.category} • {format(parseISO(tx.date), 'dd MMM', { locale: ptBR })}</p>
                   </div>
                 </div>
                 <p className={cn(
                   "text-sm font-mono font-bold tracking-tighter",
-                  tx.type === 'receita' ? "text-success" : "text-white"
+                  tx.type === 'receita' ? "text-success" : "text-v-text-primary"
                 )}>
                   {tx.type === 'receita' ? '+' : '-'}{fmt(tx.amount)}
                 </p>
@@ -945,7 +1019,7 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
   );
 }
 
-function StatCard({ title, amount, subtext, variant, isPercentage }: { title: string, amount: number, subtext: string, variant: 'success' | 'danger' | 'secondary' | 'warning', isPercentage?: boolean }) {
+function StatCard({ title, amount, subtext, variant, isPercentage, fmt }: { title: string, amount: number, subtext: string, variant: 'success' | 'danger' | 'secondary' | 'warning', isPercentage?: boolean, fmt: (v: number) => string }) {
   const colors = {
     success: "text-success font-black",
     danger: "text-danger font-black",
@@ -955,7 +1029,7 @@ function StatCard({ title, amount, subtext, variant, isPercentage }: { title: st
 
   return (
     <article className="v-panel p-5 md:p-6 transition-all hover:translate-y-[-4px] cursor-default group">
-      <span className="text-[11px] md:text-[13px] font-bold text-v-muted group-hover:text-white transition-colors uppercase tracking-widest leading-none">{title}</span>
+      <span className="text-[11px] md:text-[13px] font-bold text-v-muted group-hover:text-v-text-primary transition-colors uppercase tracking-widest leading-none">{title}</span>
       <strong className={cn("block text-2xl md:text-3xl tracking-tighter leading-none my-2 md:my-3", colors[variant])}>
         {isPercentage ? `${amount}%` : fmt(amount)}
       </strong>
@@ -964,9 +1038,84 @@ function StatCard({ title, amount, subtext, variant, isPercentage }: { title: st
   );
 }
 
-function TransactionListView({ type, transactions, onEdit, onDelete }: { type: TransactionType, transactions: Transaction[], onEdit: (tx: Transaction) => void, onDelete: (id: string) => void }) {
+function TransactionListView({ type, transactions, onEdit, onDelete, fmt, userName, selectedMonth }: { type: TransactionType, transactions: Transaction[], onEdit: (tx: Transaction) => void, onDelete: (id: string) => void, fmt: (v: number) => string, userName: string, selectedMonth: Date }) {
   const filtered = transactions.filter(t => t.type === type);
   const total = filtered.reduce((s, t) => s + t.amount, 0);
+
+  const exportToCSV = () => {
+    if (filtered.length === 0) return;
+    const headers = ['Descrição', 'Categoria', 'Data', 'Valor', 'Tipo'];
+    const rows = filtered.map(tx => [
+      tx.description,
+      tx.category,
+      format(parseISO(tx.date), 'dd/MM/yyyy'),
+      tx.amount.toFixed(2),
+      tx.type
+    ]);
+    
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `transacoes_${type}_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportToPDF = () => {
+    if (filtered.length === 0) return;
+    const doc = new jsPDF();
+    
+    // Header background (gradient simulation)
+    doc.setFillColor(108, 75, 255); // primary color
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    // Logo "V"
+    doc.setFillColor(255, 255, 255, 0.1);
+    doc.roundedRect(14, 10, 15, 15, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('V', 18, 22);
+    
+    // App Name
+    doc.setFontSize(18);
+    doc.text('Vionix Finance', 35, 18);
+    doc.setFontSize(10);
+    doc.text('CONTROLE FINANCEIRO INTELIGENTE', 35, 24);
+    
+    // Title
+    doc.setFontSize(22);
+    doc.text(`Relatório de ${type === 'receita' ? 'Receitas' : type === 'fixa' ? 'Despesas Fixas' : 'Despesas Variáveis'}`, 14, 60);
+    
+    // Info block
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Emissor: ${userName}`, 14, 70);
+    doc.text(`Data de Emissão: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 75);
+    doc.text(`Período: ${format(selectedMonth, 'MMMM yyyy', { locale: ptBR })}`, 14, 80);
+    doc.text(`Total: R$ ${total.toFixed(2)}`, 14, 85);
+
+    const tableData = filtered.map(tx => [
+      tx.description,
+      tx.category,
+      format(parseISO(tx.date), 'dd/MM/yyyy'),
+      `R$ ${tx.amount.toFixed(2)}`
+    ]);
+
+    autoTable(doc, {
+      head: [['Descrição', 'Categoria', 'Data', 'Valor']],
+      body: tableData,
+      startY: 95,
+      headStyles: { fillColor: [108, 75, 255] },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+    });
+
+    doc.save(`relatorio_${type}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
 
   return (
     <div className="space-y-6">
@@ -977,7 +1126,8 @@ function TransactionListView({ type, transactions, onEdit, onDelete }: { type: T
           <p className="text-v-muted text-[10px] md:text-sm font-bold uppercase tracking-widest mt-2">{filtered.length} transações processadas</p>
         </div>
         <div className="z-10 flex gap-2 w-full md:w-auto">
-           <button className="v-btn-ghost flex-1 md:flex-none justify-center px-6"><Download className="w-4 h-4 mr-2 inline" /> Exportar</button>
+           <button onClick={exportToCSV} className="v-btn-ghost flex-1 md:flex-none justify-center px-6"><Download className="w-4 h-4 mr-2 inline" /> Planilha</button>
+           <button onClick={exportToPDF} className="v-btn-ghost flex-1 md:flex-none justify-center px-6"><Download className="w-4 h-4 mr-2 inline" /> PDF</button>
         </div>
         <div className={cn("absolute right-[-100px] top-[-100px] w-[300px] h-[300px] blur-[120px] rounded-full opacity-20", type === 'receita' ? 'bg-success' : 'bg-danger')} />
       </div>
@@ -998,7 +1148,7 @@ function TransactionListView({ type, transactions, onEdit, onDelete }: { type: T
             <tbody>
               {filtered.map(tx => (
                 <tr key={tx.id} className="border-b border-v-border/30 hover:bg-white/[0.02] transition-colors group">
-                  <td className="p-5 text-sm font-extrabold text-white">{tx.description}</td>
+                  <td className="p-5 text-sm font-extrabold text-v-text-primary">{tx.description}</td>
                   <td className="p-5 text-xs font-black text-v-muted uppercase tracking-widest">{tx.category}</td>
                   <td className="p-5 text-xs font-bold text-v-muted">{format(parseISO(tx.date), 'dd/MM/yyyy')}</td>
                   <td className={cn("p-5 text-sm font-mono font-black text-right tracking-tighter", type === 'receita' ? "text-success" : "text-danger")}>
@@ -1006,7 +1156,7 @@ function TransactionListView({ type, transactions, onEdit, onDelete }: { type: T
                   </td>
                   <td className="p-5">
                     <div className="flex items-center justify-center gap-1 opacity-20 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => onEdit(tx)} className="p-2 text-v-muted hover:text-white hover:bg-white/5 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                      <button onClick={() => onEdit(tx)} className="p-2 text-v-muted hover:text-v-text-primary hover:bg-white/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
                       <button onClick={() => onDelete(tx.id)} className="p-2 text-v-muted hover:text-danger hover:bg-danger/5 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>
@@ -1022,7 +1172,7 @@ function TransactionListView({ type, transactions, onEdit, onDelete }: { type: T
             <div key={tx.id} className="p-5 space-y-4">
               <div className="flex justify-between items-start gap-4">
                 <div className="min-w-0">
-                  <h4 className="text-sm font-extrabold text-white truncate">{tx.description}</h4>
+                  <h4 className="text-sm font-extrabold text-v-text-primary truncate">{tx.description}</h4>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[9px] font-black text-v-muted uppercase tracking-widest">{tx.category}</span>
                     <span className="text-[9px] font-bold text-v-muted">| {format(parseISO(tx.date), 'dd/MM/yyyy')}</span>
@@ -1050,28 +1200,28 @@ function TransactionListView({ type, transactions, onEdit, onDelete }: { type: T
   );
 }
 
-function TransactionForm({ onClose, onSave, initialData, categories }: { onClose: () => void, onSave: (tx: Omit<Transaction, 'id'>) => void, initialData?: Transaction | null, categories: CategoryMap }) {
+function TransactionForm({ onClose, onSave, initialData, defaultType, categories }: { onClose: () => void, onSave: (tx: Omit<Transaction, 'id'>) => void, initialData?: Transaction | null, defaultType?: TransactionType, categories: CategoryMap }) {
   const [formData, setFormData] = useState<Omit<Transaction, 'id'>>({
-    type: initialData?.type || 'receita',
+    type: initialData?.type || defaultType || 'receita',
     description: initialData?.description || '',
     amount: initialData?.amount || 0,
-    category: initialData?.category || categories.receita[0],
+    category: initialData?.category || categories[initialData?.type || defaultType || 'receita'][0],
     date: initialData?.date || new Date().toISOString(),
     note: initialData?.note || '',
     recurring: initialData?.recurring || false
   });
 
   useEffect(() => {
-    if (!initialData) {
+    if (!initialData && !defaultType) {
       setFormData(prev => ({ ...prev, category: categories[formData.type][0] || 'Outros' }));
     }
-  }, [formData.type, categories, initialData]);
+  }, [formData.type, categories, initialData, defaultType]);
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 md:p-10 space-y-6 md:space-y-8">
       <div className="flex items-center justify-between">
         <h3 className="text-2xl md:text-3xl font-black tracking-tighter">{initialData ? 'Editar Transação' : 'Nova Transação'}</h3>
-        <button type="button" onClick={onClose} className="p-2 md:p-2.5 bg-white/5 border border-v-border rounded-[15px] text-v-muted hover:text-white transition-all"><X className="w-5 h-5" /></button>
+        <button type="button" onClick={onClose} className="p-2 md:p-2.5 bg-white/10 border border-v-border rounded-[15px] text-v-muted hover:text-v-text-primary transition-all"><X className="w-5 h-5" /></button>
       </div>
 
       <div className="space-y-4 md:space-y-6">
@@ -1085,7 +1235,7 @@ function TransactionForm({ onClose, onSave, initialData, categories }: { onClose
                 "py-2.5 text-[9px] md:text-[10px] font-black rounded-[15px] transition-all uppercase tracking-widest leading-none",
                 formData.type === t 
                   ? "v-btn-primary shadow-none"
-                  : "text-v-muted hover:text-white hover:bg-white/5"
+                  : "text-v-muted hover:text-v-text-primary hover:bg-white/10"
               )}
             >
               {t === 'fixa' ? 'Fixa' : t === 'variavel' ? 'Variável' : 'Receita'}
@@ -1096,7 +1246,7 @@ function TransactionForm({ onClose, onSave, initialData, categories }: { onClose
         <div className="space-y-4">
           <div className="space-y-2">
             <label className="v-eyebrow pl-1">Descrição</label>
-            <input required type="text" placeholder="Ex: Cliente X, Internet..." className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-[#E6E9F2] outline-none focus:border-secondary transition-colors text-sm" value={formData.description} onChange={e => setFormData(p => ({ ...p, description: e.target.value }))} />
+            <input required type="text" placeholder="Ex: Cliente X, Internet..." className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm" value={formData.description} onChange={e => setFormData(p => ({ ...p, description: e.target.value }))} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1106,8 +1256,9 @@ function TransactionForm({ onClose, onSave, initialData, categories }: { onClose
                 required 
                 type="number" 
                 step="0.01" 
-                className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-[#E6E9F2] outline-none focus:border-secondary transition-colors font-mono font-bold text-sm" 
-                value={isNaN(formData.amount) ? '' : formData.amount} 
+                placeholder="0,00"
+                className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors font-mono font-bold text-sm" 
+                value={formData.amount === 0 && !initialData ? '' : formData.amount} 
                 onChange={e => {
                   const val = parseFloat(e.target.value);
                   setFormData(p => ({ ...p, amount: isNaN(val) ? 0 : val }));
@@ -1116,14 +1267,14 @@ function TransactionForm({ onClose, onSave, initialData, categories }: { onClose
             </div>
             <div className="space-y-2">
               <label className="v-eyebrow pl-1">Data</label>
-              <input required type="date" className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-[#E6E9F2] outline-none focus:border-secondary transition-colors font-bold text-sm text-center" value={formData.date.split('T')[0]} onChange={e => setFormData(p => ({ ...p, date: new Date(e.target.value).toISOString() }))} />
+              <input required type="date" className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors font-bold text-sm text-center" value={formData.date.split('T')[0]} onChange={e => setFormData(p => ({ ...p, date: new Date(e.target.value).toISOString() }))} />
             </div>
           </div>
 
           <div className="space-y-2">
             <label className="v-eyebrow pl-1">Categoria</label>
-            <select className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-[#E6E9F2] outline-none focus:border-secondary transition-colors appearance-none font-bold text-sm" value={formData.category} onChange={e => setFormData(p => ({ ...p, category: e.target.value }))}>
-              {(categories[formData.type] || []).map((c: string) => <option key={c} value={c} className="bg-dark-2">{c}</option>)}
+            <select className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors appearance-none font-bold text-sm" value={formData.category} onChange={e => setFormData(p => ({ ...p, category: e.target.value }))}>
+              {(categories[formData.type] || []).map((c: string) => <option key={c} value={c} className="bg-v-bg text-v-text-primary">{c}</option>)}
             </select>
           </div>
         </div>
@@ -1136,7 +1287,7 @@ function TransactionForm({ onClose, onSave, initialData, categories }: { onClose
   );
 }
 
-function AnnualView({ transactions, selectedYear }: { transactions: Transaction[], selectedYear: number }) {
+function AnnualView({ transactions, selectedYear, fmt, userName }: { transactions: Transaction[], selectedYear: number, fmt: (v: number) => string, userName: string }) {
   const months = eachMonthOfInterval({ start: startOfYear(new Date(selectedYear, 0, 1)), end: endOfYear(new Date(selectedYear, 0, 1)) });
   
   const data = useMemo(() => months.map(m => {
@@ -1146,8 +1297,83 @@ function AnnualView({ transactions, selectedYear }: { transactions: Transaction[
     return { name: format(m, 'MMM', { locale: ptBR }), receita: r, despesa: d, saldo: r - d };
   }), [transactions, months]);
 
+  const exportYearlyCSV = () => {
+    const headers = ['Mês', 'Receitas', 'Despesas', 'Saldo'];
+    const rows = data.map(d => [
+      d.name,
+      d.receita.toFixed(2),
+      d.despesa.toFixed(2),
+      d.saldo.toFixed(2)
+    ]);
+    
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `relatorio_anual_${selectedYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportYearlyPDF = () => {
+    const doc = new jsPDF();
+    
+    // Header background
+    doc.setFillColor(108, 75, 255);
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    // Logo "V"
+    doc.setFillColor(255, 255, 255, 0.1);
+    doc.roundedRect(14, 10, 15, 15, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('V', 18, 22);
+    
+    // App Name
+    doc.setFontSize(18);
+    doc.text('Vionix Finance', 35, 18);
+    doc.setFontSize(10);
+    doc.text('CONTROLE FINANCEIRO INTELIGENTE', 35, 24);
+
+    // Title
+    doc.setFontSize(22);
+    doc.text(`Relatório Financeiro Anual - ${selectedYear}`, 14, 60);
+
+    // Info block
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Emissor: ${userName}`, 14, 70);
+    doc.text(`Data de Emissão: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 75);
+    doc.text(`Ano de Referência: ${selectedYear}`, 14, 80);
+
+    const tableData = data.map(d => [
+      d.name,
+      fmt(d.receita),
+      fmt(d.despesa),
+      fmt(d.saldo)
+    ]);
+
+    autoTable(doc, {
+      head: [['Mês', 'Receitas', 'Despesas', 'Saldo']],
+      body: tableData,
+      startY: 90,
+      headStyles: { fillColor: [108, 75, 255] },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+    });
+
+    doc.save(`relatorio_anual_${selectedYear}.pdf`);
+  };
+
   return (
     <div className="space-y-4">
+      <div className="flex justify-end gap-2 mb-4">
+         <button onClick={exportYearlyCSV} className="v-btn-ghost px-6 py-2.5 text-xs"><Download className="w-4 h-4 mr-2 inline" /> Planilha CSV</button>
+         <button onClick={exportYearlyPDF} className="v-btn-ghost px-6 py-2.5 text-xs"><Download className="w-4 h-4 mr-2 inline" /> Relatório PDF</button>
+      </div>
       {/* Table for Desktop */}
       <div className="hidden lg:block v-panel overflow-hidden">
         <div className="overflow-x-auto custom-scrollbar">
@@ -1163,7 +1389,7 @@ function AnnualView({ transactions, selectedYear }: { transactions: Transaction[
             <tbody>
               {data.map(d => (
                 <tr key={d.name} className="border-b border-v-border/30 hover:bg-white/[0.02]">
-                  <td className="p-5 font-black text-white sticky left-0 bg-[#12182B] z-10 border-r border-v-border/50 uppercase tracking-widest text-[11px]">{d.name}</td>
+                  <td className="p-5 font-black text-v-text-primary sticky left-0 bg-v-card z-10 border-r border-v-border/50 uppercase tracking-widest text-[11px]">{d.name}</td>
                   <td className="p-5 text-right font-mono text-success font-bold">{fmt(d.receita)}</td>
                   <td className="p-5 text-right font-mono text-danger font-bold">{fmt(d.despesa)}</td>
                   <td className={cn("p-5 text-right font-mono font-black tracking-tighter", d.saldo >= 0 ? "text-secondary" : "text-danger")}>{fmt(d.saldo)}</td>
@@ -1179,7 +1405,7 @@ function AnnualView({ transactions, selectedYear }: { transactions: Transaction[
         {data.map(d => (
           <div key={d.name} className="v-panel p-5 space-y-3">
             <div className="flex justify-between items-center border-b border-v-border pb-2 mb-2">
-              <span className="text-sm font-black text-white uppercase tracking-widest">{d.name}</span>
+              <span className="text-sm font-black text-v-text-primary uppercase tracking-widest">{d.name}</span>
               <span className={cn("text-xs font-black px-2 py-1 rounded-lg", d.saldo >= 0 ? "bg-success/10 text-success" : "bg-danger/10 text-danger")}>
                 {d.saldo >= 0 ? 'Lucro' : 'Prejuízo'}
               </span>
@@ -1209,9 +1435,10 @@ function AnnualView({ transactions, selectedYear }: { transactions: Transaction[
 
 
 
-function SettingsView({ categories, onUpdate }: { categories: CategoryMap, onUpdate: (cats: CategoryMap) => void }) {
+function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, onToggleValues }: { categories: CategoryMap, onUpdate: (cats: CategoryMap) => void, theme: 'light' | 'dark', onThemeChange: (t: 'light' | 'dark') => void, showValues: boolean, onToggleValues: () => void }) {
   const [newCat, setNewCat] = useState('');
   const [activeType, setActiveType] = useState<TransactionType>('receita');
+  const [settingsTab, setSettingsTab] = useState<'categories' | 'system'>('categories');
 
   const addCategory = () => {
     if (!newCat.trim()) return;
@@ -1238,78 +1465,174 @@ function SettingsView({ categories, onUpdate }: { categories: CategoryMap, onUpd
     <div className="space-y-6">
       <div className="v-panel p-6 md:p-10 bg-gradient-to-br from-primary/10 to-secondary/5 relative overflow-hidden">
         <div className="relative z-10">
-          <p className="v-eyebrow mb-2">Central de Cadastros</p>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tighter leading-none mb-4">Gerencie seu sistema</h2>
-          <p className="text-v-muted text-sm md:text-base max-w-xl">Adicione ou remova categorias personalizadas para organizar suas finanças do seu jeito.</p>
+          <p className="v-eyebrow mb-2">Central do Sistema</p>
+          <h2 className="text-3xl md:text-4xl font-black tracking-tighter leading-none mb-4">Configurações</h2>
+          <p className="text-v-muted text-sm md:text-base max-w-xl">Gerencie categorias, preferências do sistema e personalizações da sua conta.</p>
+          
+          <div className="flex gap-4 mt-8">
+            <button 
+              onClick={() => setSettingsTab('categories')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                settingsTab === 'categories' ? "bg-white text-dark shadow-xl" : "bg-white/5 text-v-muted hover:bg-white/10"
+              )}
+            >
+              Categorias
+            </button>
+            <button 
+              onClick={() => setSettingsTab('system')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                settingsTab === 'system' ? "bg-white text-dark shadow-xl" : "bg-white/5 text-v-muted hover:bg-white/10"
+              )}
+            >
+              Sistema
+            </button>
+          </div>
         </div>
         <div className="absolute right-[-20px] top-[-20px] w-48 h-48 bg-primary/10 blur-[60px] rounded-full" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 space-y-2">
-          {(['receita', 'fixa', 'variavel'] as TransactionType[]).map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setActiveType(t)}
-              className={cn(
-                "w-full flex items-center justify-between p-5 rounded-[20px] border transition-all font-bold text-sm uppercase tracking-widest",
-                activeType === t 
-                  ? "bg-white/10 border-white/20 text-white shadow-xl" 
-                  : "bg-white/5 border-v-border text-v-muted hover:bg-white/[0.08]"
-              )}
-            >
-              {t === 'receita' ? 'Receitas' : t === 'fixa' ? 'Despesas Fixas' : 'Despesas Variáveis'}
-              {activeType === t && <Check className="w-4 h-4 text-secondary" />}
-            </button>
-          ))}
-        </div>
-
-        <div className="lg:col-span-2 v-panel p-6 md:p-8">
-          <div className="flex flex-col sm:flex-row gap-4 mb-8">
-            <input 
-              type="text" 
-              placeholder="Nome da nova categoria..." 
-              className="flex-1 bg-white/5 border border-v-border rounded-[14px] p-4 text-[#E6E9F2] outline-none focus:border-secondary transition-colors text-sm"
-              value={newCat}
-              onChange={e => setNewCat(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addCategory()}
-            />
-            <button 
-              type="button"
-              onClick={addCategory}
-              className="v-btn-primary flex items-center justify-center gap-2 py-4 px-8"
-            >
-              <PlusCircle className="w-5 h-5" /> Adicionar
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {categories[activeType].map(cat => (
-              <div key={cat} className="group flex items-center justify-between p-4 rounded-[15px] bg-white/5 border border-v-border hover:border-white/20 transition-all hover:bg-white/[0.08]">
-                <span className="text-sm font-bold text-v-muted group-hover:text-white transition-colors">{cat}</span>
-                <button 
-                  type="button"
-                  onClick={() => removeCategory(cat)}
-                  className="p-2 text-v-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+      {settingsTab === 'categories' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="lg:col-span-1 space-y-2">
+            {(['receita', 'fixa', 'variavel'] as TransactionType[]).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setActiveType(t)}
+                className={cn(
+                  "w-full flex items-center justify-between p-5 rounded-[20px] border transition-all font-bold text-sm uppercase tracking-widest",
+                  activeType === t 
+                    ? "bg-primary text-white border-none shadow-xl" 
+                    : "bg-v-bg border-v-border text-v-muted hover:bg-white/[0.08]"
+                )}
+              >
+                {t === 'receita' ? 'Receitas' : t === 'fixa' ? 'Despesas Fixas' : 'Despesas Variáveis'}
+                {activeType === t && <Check className="w-4 h-4 text-secondary" />}
+              </button>
             ))}
-            {categories[activeType].length === 0 && (
-              <div className="col-span-full py-10 text-center text-v-muted italic font-bold uppercase tracking-widest text-xs opacity-40">
-                Nenhuma categoria cadastrada
-              </div>
-            )}
+          </div>
+
+          <div className="lg:col-span-2 v-panel p-6 md:p-8">
+            <div className="flex flex-col sm:flex-row gap-4 mb-8">
+              <input 
+                type="text" 
+                placeholder="Nome da nova categoria..." 
+                className="flex-1 bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm"
+                value={newCat}
+                onChange={e => setNewCat(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addCategory()}
+              />
+              <button 
+                type="button"
+                onClick={addCategory}
+                className="v-btn-primary flex items-center justify-center gap-2 py-4 px-8"
+              >
+                <PlusCircle className="w-5 h-5" /> Adicionar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {categories[activeType].map(cat => (
+                <div key={cat} className="group flex items-center justify-between p-4 rounded-[15px] bg-white/5 border border-v-border hover:border-v-border hover:bg-white/[0.08] transition-all">
+                  <span className="text-sm font-bold text-v-text-primary transition-colors">{cat}</span>
+                  <button 
+                    type="button"
+                    onClick={() => removeCategory(cat)}
+                    className="p-2 text-v-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              {categories[activeType].length === 0 && (
+                <div className="col-span-full py-10 text-center text-v-muted italic font-bold uppercase tracking-widest text-xs opacity-40">
+                  Nenhuma categoria cadastrada
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <div className="v-panel p-8 space-y-6">
+              <h3 className="text-xl font-black tracking-tighter mb-4 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-secondary" /> Preferências do Display
+              </h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-v-border">
+                   <div>
+                      <p className="text-sm font-bold">Filtro de Moeda</p>
+                      <p className="text-[10px] text-v-muted uppercase font-black tracking-widest">Símbolo exibido no sistema</p>
+                   </div>
+                   <select className="bg-v-bg text-v-text-primary border border-v-border p-2 rounded-lg text-xs font-bold outline-none">
+                      <option>BRL (R$)</option>
+                      <option>USD ($)</option>
+                      <option>EUR (€)</option>
+                   </select>
+                </div>
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-v-border">
+                   <div>
+                      <p className="text-sm font-bold">Formato de Data</p>
+                      <p className="text-[10px] text-v-muted uppercase font-black tracking-widest">Padrão de exibição temporal</p>
+                   </div>
+                   <select className="bg-v-bg text-v-text-primary border border-v-border p-2 rounded-lg text-xs font-bold outline-none">
+                      <option>DD/MM/YYYY</option>
+                      <option>MM/DD/YYYY</option>
+                      <option>YYYY-MM-DD</option>
+                   </select>
+                </div>
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-v-border">
+                   <div>
+                      <p className="text-sm font-bold">Tema do Sistema</p>
+                      <p className="text-[10px] text-v-muted uppercase font-black tracking-widest">Alternar entre claro e escuro</p>
+                   </div>
+                   <button 
+                    onClick={() => onThemeChange(theme === 'light' ? 'dark' : 'light')}
+                    className="flex items-center gap-2 bg-v-bg p-1 rounded-xl border border-v-border cursor-pointer transition-all hover:bg-white/5"
+                   >
+                     <div className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all", theme === 'dark' ? "bg-white text-dark shadow-md" : "text-v-muted")}>Dark</div>
+                     <div className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all", theme === 'light' ? "bg-white text-dark shadow-md" : "text-v-muted")}>Light</div>
+                   </button>
+                </div>
+              </div>
+           </div>
+
+           <div className="v-panel p-8 space-y-6">
+              <h3 className="text-xl font-black tracking-tighter mb-4 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-secondary" /> Suporte & Ajuda
+              </h3>
+              <div className="space-y-4">
+                <div className="p-5 rounded-2xl bg-secondary/5 border border-secondary/20">
+                   <p className="text-sm font-black mb-1">Canais Oficiais</p>
+                   <p className="text-[10px] text-v-muted uppercase font-black tracking-widest mb-4">Lori TI Soluções</p>
+                   <a 
+                    href="https://wa.me/5511985258655" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="v-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 no-underline text-center"
+                   >
+                     Falar no WhatsApp <MessageSquare className="w-4 h-4" />
+                   </a>
+                </div>
+                <div className="p-4 rounded-2xl bg-white/5 border border-v-border">
+                   <p className="text-sm font-bold mb-1">Backup Automático</p>
+                   <p className="text-[10px] text-v-muted uppercase font-black tracking-widest mb-4">Sincronização em tempo real</p>
+                   <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-success animate-pulse" />
+                      <span className="text-xs font-bold text-success">Ativado e Sincronizado</span>
+                   </div>
+                </div>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[], onAdd: (g: Omit<FinancialGoal, 'id'>) => void, onUpdate: (id: string, amount: number) => void, onDelete: (id: string) => void }) {
+function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: FinancialGoal[], onAdd: (g: Omit<FinancialGoal, 'id'>) => void, onUpdate: (id: string, amount: number) => void, onDelete: (id: string) => void, fmt: (v: number) => string }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newGoal, setNewGoal] = useState<Partial<FinancialGoal>>({
     title: '',
@@ -1382,7 +1705,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
                     type="number" 
                     placeholder="0,00" 
                     className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm font-mono"
-                    value={isNaN(newGoal.targetAmount!) ? '' : newGoal.targetAmount}
+                    value={newGoal.targetAmount === 0 ? '' : newGoal.targetAmount}
                     onChange={e => {
                       const val = parseFloat(e.target.value);
                       setNewGoal(p => ({ ...p, targetAmount: isNaN(val) ? 0 : val }));
@@ -1395,7 +1718,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
                     type="number" 
                     placeholder="0,00" 
                     className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm font-mono"
-                    value={isNaN(newGoal.currentAmount!) ? '' : newGoal.currentAmount}
+                    value={newGoal.currentAmount === 0 ? '' : newGoal.currentAmount}
                     onChange={e => {
                       const val = parseFloat(e.target.value);
                       setNewGoal(p => ({ ...p, currentAmount: isNaN(val) ? 0 : val }));
@@ -1409,11 +1732,11 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
                     value={newGoal.category}
                     onChange={e => setNewGoal(p => ({ ...p, category: e.target.value }))}
                   >
-                    <option value="Reserva" className="bg-dark-2">Reserva</option>
-                    <option value="Lazer" className="bg-dark-2">Lazer</option>
-                    <option value="Educação" className="bg-dark-2">Educação</option>
-                    <option value="Bens" className="bg-dark-2">Bens</option>
-                    <option value="Futuro" className="bg-dark-2">Futuro</option>
+                    <option value="Reserva" className="bg-v-bg text-v-text-primary">Reserva</option>
+                    <option value="Lazer" className="bg-v-bg text-v-text-primary">Lazer</option>
+                    <option value="Educação" className="bg-v-bg text-v-text-primary">Educação</option>
+                    <option value="Bens" className="bg-v-bg text-v-text-primary">Bens</option>
+                    <option value="Futuro" className="bg-v-bg text-v-text-primary">Futuro</option>
                   </select>
                 </div>
               </div>
@@ -1428,7 +1751,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
         {goals.map(goal => (
-          <GoalItem key={goal.id} goal={goal} onUpdate={onUpdate} onDelete={onDelete} />
+          <GoalItem key={goal.id} goal={goal} onUpdate={onUpdate} onDelete={onDelete} fmt={fmt} />
         ))}
         {goals.length === 0 && !isAdding && (
           <div className="col-span-full v-panel p-20 text-center flex flex-col items-center justify-center opacity-40 border-dashed border-2">
@@ -1442,7 +1765,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete }: { goals: FinancialGoal[
   );
 }
 
-const GoalItem = ({ goal, onUpdate, onDelete }: any) => {
+function GoalItem({ goal, onUpdate, onDelete, fmt }: any) {
   const target = goal.targetAmount || 1; // Prevent division by zero
   const percent = Math.min(100, Math.max(0, (goal.currentAmount / target) * 100));
   const remaining = Math.max(0, goal.targetAmount - goal.currentAmount);
@@ -1472,7 +1795,7 @@ const GoalItem = ({ goal, onUpdate, onDelete }: any) => {
         </div>
         <div>
           <span className="v-eyebrow text-[10px]">{goal.category}</span>
-          <h3 className="text-xl font-black tracking-tight text-white">{goal.title}</h3>
+          <h3 className="text-xl font-black tracking-tight text-v-text-primary">{goal.title}</h3>
         </div>
       </div>
 
@@ -1480,7 +1803,7 @@ const GoalItem = ({ goal, onUpdate, onDelete }: any) => {
         <div className="flex justify-between items-end">
           <div>
             <p className="v-eyebrow mb-1">Acumulado</p>
-            <p className="text-2xl font-black font-mono tracking-tighter text-white">{fmt(goal.currentAmount)}</p>
+            <p className="text-2xl font-black font-mono tracking-tighter text-v-text-primary">{fmt(goal.currentAmount)}</p>
           </div>
           <div className="text-right">
             <p className="v-eyebrow mb-1">Objetivo</p>
@@ -1533,7 +1856,7 @@ const GoalItem = ({ goal, onUpdate, onDelete }: any) => {
             <input 
               type="number" 
               className="w-full bg-white/5 border border-v-border rounded-[12px] p-3 text-white text-center font-mono font-bold text-sm outline-none focus:border-secondary transition-all"
-              value={isNaN(goal.currentAmount) ? '' : goal.currentAmount}
+              value={goal.currentAmount === 0 ? '' : goal.currentAmount}
               onChange={(e) => {
                 const val = parseFloat(e.target.value);
                 onUpdate(goal.id, isNaN(val) ? 0 : val);
