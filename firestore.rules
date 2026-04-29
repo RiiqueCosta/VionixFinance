@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. DEFAULT DENY: Safety net for any unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- SHARED HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- TEST CONNECTION ---
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // --- TRANSACTIONS ---
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['userId', 'type', 'description', 'amount', 'category', 'date', 'createdAt', 'updatedAt'])
+        && data.userId == request.auth.uid
+        && data.type in ['receita', 'fixa', 'variavel']
+        && data.description is string && data.description.size() <= 200
+        && data.amount is number
+        && data.category is string && data.category.size() <= 50
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /transactions/{transactionId} {
+      // Users can only read their own transactions
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.uid
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Allow full updates if schema is valid
+          isValidTransaction(incoming()) && incoming().updatedAt == request.time
+        );
+
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- GOALS ---
+    function isValidGoal(data) {
+      return data.keys().hasAll(['userId', 'title', 'targetAmount', 'currentAmount', 'category', 'createdAt', 'updatedAt'])
+        && data.userId == request.auth.uid
+        && data.title is string && data.title.size() <= 100
+        && data.targetAmount is number
+        && data.currentAmount is number
+        && data.category is string && data.category.size() <= 50
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /goals/{goalId} {
+      // Users can only read their own goals
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(goalId)
+        && isValidGoal(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.uid
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Update Progress (Only currentAmount changes)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['currentAmount', 'updatedAt']) && incoming().currentAmount is number)
+          ||
+          // Action: Full Edit
+          isValidGoal(incoming())
+        );
+
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // --- USER SETTINGS ---
+    match /users/{userId}/settings/data {
+      // This path is inherently secured by the userId in the URL
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && incoming().keys().hasAll(['categories', 'updatedAt'])
+        && incoming().categories.receita is list
+        && incoming().categories.fixa is list
+        && incoming().categories.variavel is list
+        && incoming().updatedAt == request.time;
+    }
+  }
+}

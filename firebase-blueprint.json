@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "receita",
+            "fixa",
+            "variavel"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "category": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "note": {
+          "type": "string"
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "type",
+        "description",
+        "amount",
+        "category",
+        "date",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FinancialGoal": {
+      "title": "FinancialGoal",
+      "description": "Financial goal for the user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "targetAmount": {
+          "type": "number"
+        },
+        "currentAmount": {
+          "type": "number"
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "category": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "title",
+        "targetAmount",
+        "currentAmount",
+        "category",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User specific settings and categories",
+      "type": "object",
+      "properties": {
+        "categories": {
+          "type": "object",
+          "properties": {
+            "receita": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fixa": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "variavel": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "categories",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial transactions collection"
+    },
+    "/goals/{goalId}": {
+      "schema": "FinancialGoal",
+      "description": "Financial goals collection"
+    },
+    "/users/{userId}/settings/data": {
+      "schema": "UserSettings",
+      "description": "User specific settings"
+    }
+  }
+}
