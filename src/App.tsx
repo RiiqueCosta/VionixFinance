@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { POSITIVE_TIPS } from './constants';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -7,6 +8,7 @@ import {
   signOut,
   setPersistence,
   browserLocalPersistence,
+  updateProfile,
   User
 } from 'firebase/auth';
 import { 
@@ -152,7 +154,15 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [showValues, setShowValues] = useState(true);
 
-  const userName = useMemo(() => user?.displayName || user?.email || 'Usuário', [user]);
+  const userName = useMemo(() => user?.displayName || user?.email?.split('@')[0] || 'Usuário', [user, user?.displayName]);
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 5) return 'Boa madrugada';
+    if (hour < 12) return 'Bom dia';
+    if (hour < 18) return 'Boa tarde';
+    return 'Boa noite';
+  };
 
   const fmt = useCallback((v: number) => {
     if (!showValues) return 'R$ ••••••';
@@ -234,7 +244,12 @@ export default function App() {
     const sRef = doc(db, 'users', user.uid, 'settings', 'data');
     const unsubscribeSettings = onSnapshot(sRef, (snapshot) => {
       if (snapshot.exists()) {
-        setCategories(snapshot.data().categories as CategoryMap);
+        const storedCats = snapshot.data().categories || {};
+        // Merge with defaults to ensure new keys like 'metas' exist for old users
+        setCategories({
+          ...DEFAULT_CATEGORIES,
+          ...storedCats
+        } as CategoryMap);
       } else {
         // Initialize settings if they don't exist
         setDoc(sRef, { 
@@ -324,11 +339,11 @@ export default function App() {
     }
   };
 
-  const updateGoal = async (id: string, amount: number) => {
+  const updateGoal = async (id: string, data: Partial<FinancialGoal>) => {
     if (!user) return;
     try {
       await updateDoc(doc(db, 'goals', id), {
-        currentAmount: amount,
+        ...data,
         updatedAt: serverTimestamp()
       });
     } catch (error) {
@@ -408,6 +423,17 @@ export default function App() {
       setCurrentPage('dashboard');
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const updateUserName = async (newName: string) => {
+    if (!user) return;
+    try {
+      await updateProfile(user, { displayName: newName });
+      // Force UI refresh by cloning user skip state
+      setUser({ ...user, displayName: newName } as User);
+    } catch (error) {
+      console.error("Error updating profile:", error);
     }
   };
 
@@ -598,11 +624,12 @@ export default function App() {
             </button>
             <div className="min-w-0">
               <p className="v-eyebrow truncate flex items-center gap-2">
-                {currentPage === 'dashboard' ? 'Visão Geral' : 'Controle'}
+                <span className="text-v-muted">{getGreeting()},</span>
+                <span className="text-secondary font-black">{userName}</span>
                 {user && (
                   <>
-                    <span className="w-1 h-1 rounded-full bg-v-border" />
-                    <span className="text-secondary lowercase font-bold">{user.email}</span>
+                    <span className="w-1 h-1 rounded-full bg-v-border mx-1" />
+                    <span className="opacity-60">{currentPage === 'dashboard' ? 'Início' : currentPage.replace(/s$/, 's')}</span>
                   </>
                 )}
               </p>
@@ -642,21 +669,6 @@ export default function App() {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
-            
-            <button 
-              onClick={() => { 
-                setEditingTransaction(null); 
-                let type: TransactionType | undefined = undefined;
-                if (currentPage === 'receitas') type = 'receita';
-                if (currentPage === 'fixas') type = 'fixa';
-                if (currentPage === 'variaveis') type = 'variavel';
-                setDefaultTransactionType(type);
-                setIsModalOpen(true); 
-              }}
-              className="v-btn-primary shrink-0 px-3 py-2 sm:px-4 sm:py-2.5"
-            >
-              <Plus className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Nova transação</span>
-            </button>
           </div>
         </header>
 
@@ -683,13 +695,19 @@ export default function App() {
                     fmt={fmt}
                     userName={userName}
                     selectedMonth={selectedMonth}
+                    onAddNew={() => {
+                      setEditingTransaction(null);
+                      const type = currentPage === 'receitas' ? 'receita' : currentPage === 'fixas' ? 'fixa' : 'variavel';
+                      setDefaultTransactionType(type);
+                      setIsModalOpen(true);
+                    }}
                   />
                 )}
                 {currentPage === 'anual' && (
                   <AnnualView transactions={transactions} selectedYear={selectedMonth.getFullYear()} fmt={fmt} userName={userName} />
                 )}
                 {currentPage === 'metas' && (
-                  <GoalsView goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} fmt={fmt} />
+                  <GoalsView goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} fmt={fmt} categories={categories.metas} />
                 )}
                 {currentPage === 'config' && (
                   <SettingsView 
@@ -699,6 +717,8 @@ export default function App() {
                     onThemeChange={setTheme} 
                     showValues={showValues}
                     onToggleValues={() => setShowValues(!showValues)}
+                    user={user}
+                    onUpdateProfile={updateUserName}
                   />
                 )}
               </motion.div>
@@ -745,6 +765,51 @@ export default function App() {
 
 // --- Sub-Components ---
 
+function CurrencyInput({ value, onChange, placeholder, className, required }: { value: number | string, onChange: (val: number) => void, placeholder?: string, className?: string, required?: boolean }) {
+  const [displayValue, setDisplayValue] = useState('');
+  const inputId = useMemo(() => 'input-' + Math.random().toString(36).substr(2, 9), []);
+
+  // Format number to PT-BR string for display
+  const formatValue = (val: number | string) => {
+    if (val === '' || val === 0) return '';
+    return Number(val).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  };
+
+  useEffect(() => {
+    if (document.activeElement !== null && (document.activeElement as any).id === inputId) return;
+    setDisplayValue(formatValue(value));
+  }, [value, inputId]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.replace(/\D/g, '');
+    if (!raw) {
+      setDisplayValue('');
+      onChange(0);
+      return;
+    }
+    
+    const num = parseInt(raw, 10) / 100;
+    setDisplayValue(formatValue(num));
+    onChange(num);
+  };
+
+  return (
+    <input
+      id={inputId}
+      type="text"
+      inputMode="numeric"
+      placeholder={placeholder || "0,00"}
+      className={cn("text-right", className)}
+      value={displayValue}
+      onChange={handleChange}
+      required={required}
+    />
+  );
+}
+
 function NavBtn({ active, children, onClick, id }: { active: boolean, children: React.ReactNode, onClick: () => void, id?: string }) {
   return (
     <button 
@@ -763,10 +828,21 @@ function NavBtn({ active, children, onClick, id }: { active: boolean, children: 
 }
 
 function DashboardView({ summary, transactions, allTransactions, selectedMonth, goals, fmt }: { summary: any, transactions: Transaction[], allTransactions: Transaction[], selectedMonth: Date, goals: FinancialGoal[], fmt: (v: number) => string }) {
-  const { growthData, monthlyGoalData, statsComparison } = useMemo(() => {
+  const { growthData, monthlyGoalData, statsComparison, pieData } = useMemo(() => {
     // Current Period
     const currentProfit = summary.receita - summary.totalDespesa;
     
+    // Category Distribution (Pie Chart Data)
+    const expenseTxs = transactions.filter(t => t.type !== 'receita');
+    const catMap: Record<string, number> = {};
+    expenseTxs.forEach(t => {
+      catMap[t.category] = (catMap[t.category] || 0) + (Number(t.amount) || 0);
+    });
+    const pieData = Object.entries(catMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6); // Limit to top 6 categories
+
     // Previous Period
     const prevMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1);
     const prevMonthTxs = allTransactions.filter(tx => isSameMonth(parseISO(tx.date), prevMonth));
@@ -804,9 +880,10 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
       statsComparison: {
         rev: revDiff,
         exp: expDiff
-      }
+      },
+      pieData
     };
-  }, [summary, allTransactions, selectedMonth, goals]);
+  }, [summary, allTransactions, selectedMonth, goals, transactions]);
 
   const chartData = useMemo(() => {
     const months = eachMonthOfInterval({
@@ -928,52 +1005,98 @@ function DashboardView({ summary, transactions, allTransactions, selectedMonth, 
           </div>
         </div>
 
-        {/* Goals Summary (Simplified for Dashboard) */}
+        {/* Category Distribution (Pie Chart) */}
         <div className="v-panel p-6 flex flex-col">
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="v-eyebrow">Objetivos</p>
-              <h3 className="text-2xl font-black tracking-tighter">Minhas Metas</h3>
+              <p className="v-eyebrow">Gastos</p>
+              <h3 className="text-xl font-black tracking-tighter">Por Categoria</h3>
             </div>
-            <Target className="w-5 h-5 text-secondary animate-pulse" />
+            <BarChart3 className="w-5 h-5 text-v-accent" />
           </div>
-          <div className="flex-1 space-y-6">
-            {goals.slice(0, 3).map(goal => {
-              const target = goal.targetAmount || 1;
-              const progress = Math.min(100, (goal.currentAmount / target) * 100);
-              return (
-                <div key={goal.id} className="space-y-2 group cursor-pointer">
-                  <div className="flex justify-between items-center text-xs font-bold mb-1">
-                    <span className="text-white group-hover:text-secondary transition-colors truncate max-w-[140px]">{goal.title}</span>
-                    <span className="text-v-muted">{progress.toFixed(0)}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden border border-v-border/30">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                      className="h-full bg-gradient-to-r from-primary to-secondary rounded-full" 
-                    />
-                  </div>
+          
+          <div className="flex-1 min-h-[220px] relative">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                  animationDuration={1500}
+                >
+                  {pieData.map((_entry, index) => (
+                    <Cell key={`cell-${index}`} fill={['#6C4BFF', '#00D4FF', '#FF4B6E', '#FFB800', '#22C55E', '#A855F7'][index % 6]} stroke="none" />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#12182B', borderRadius: '12px', border: 'none', fontSize: '10px' }}
+                  formatter={(value: number) => fmt(value)}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-[10px] font-black text-v-muted uppercase tracking-widest">Total</span>
+              <span className="text-lg font-black text-v-text-primary">{fmt(summary.totalDespesa)}</span>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {pieData.slice(0, 3).map((item, idx) => (
+              <div key={item.name} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: ['#6C4BFF', '#00D4FF', '#FF4B6E', '#FFB800', '#22C55E', '#A855F7'][idx % 6] }} />
+                  <span className="text-[10px] font-bold text-v-text-primary capitalize">{item.name}</span>
                 </div>
-              );
-            })}
-            {goals.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center opacity-20 py-10">
-                <Target className="w-12 h-12 mb-3" />
-                <p className="text-[10px] font-black uppercase tracking-widest">Sem metas planejadas</p>
+                <span className="text-[10px] font-mono font-bold text-v-muted">{((item.value / (summary.totalDespesa || 1)) * 100).toFixed(0)}%</span>
               </div>
-            )}
-            {goals.length > 3 && (
-              <p className="text-[10px] font-black uppercase tracking-widest text-v-muted text-center pt-2">
-                + {goals.length - 3} outras metas
-              </p>
-            )}
-          </div>
-          <div className="mt-8 pt-6 border-t border-v-border">
-             {/* Pricing link removed as per request */}
+            ))}
           </div>
         </div>
       </div>
+
+      {/* Goals Progress Section */}
+      {goals.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="v-eyebrow">Progresso das Metas</h4>
+            <span className="text-[10px] font-black text-secondary uppercase tracking-widest">{goals.length} ativas</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {goals.slice(0, 4).map(goal => {
+               const target = goal.targetAmount || 1;
+               const progress = Math.min(100, (goal.currentAmount / target) * 100);
+               return (
+                 <div key={goal.id} className="v-panel p-4 space-y-3 group hover:border-secondary/30 transition-all">
+                    <div className="flex justify-between items-start">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black text-v-muted uppercase tracking-widest truncate">{goal.category}</p>
+                        <h5 className="text-sm font-bold text-v-text-primary truncate">{goal.title}</h5>
+                      </div>
+                      <Target className="w-3 h-3 text-secondary" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-[9px] font-black uppercase tracking-tighter">
+                        <span className="text-v-muted">Progresso</span>
+                        <span className="text-secondary">{progress.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-white/5 rounded-full overflow-hidden border border-v-border/30">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${progress}%` }}
+                          className="h-full bg-gradient-to-r from-primary to-secondary rounded-full" 
+                        />
+                      </div>
+                    </div>
+                 </div>
+               );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Recent Activity Section */}
       <div className="v-panel p-6">
@@ -1038,7 +1161,7 @@ function StatCard({ title, amount, subtext, variant, isPercentage, fmt }: { titl
   );
 }
 
-function TransactionListView({ type, transactions, onEdit, onDelete, fmt, userName, selectedMonth }: { type: TransactionType, transactions: Transaction[], onEdit: (tx: Transaction) => void, onDelete: (id: string) => void, fmt: (v: number) => string, userName: string, selectedMonth: Date }) {
+function TransactionListView({ type, transactions, onEdit, onDelete, fmt, userName, selectedMonth, onAddNew }: { type: TransactionType, transactions: Transaction[], onEdit: (tx: Transaction) => void, onDelete: (id: string) => void, fmt: (v: number) => string, userName: string, selectedMonth: Date, onAddNew: () => void }) {
   const filtered = transactions.filter(t => t.type === type);
   const total = filtered.reduce((s, t) => s + t.amount, 0);
 
@@ -1119,15 +1242,26 @@ function TransactionListView({ type, transactions, onEdit, onDelete, fmt, userNa
 
   return (
     <div className="space-y-6">
-       <div className="v-panel p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative">
-        <div className="relative z-10 text-center md:text-left">
+       <div className="v-panel p-6 md:p-8 flex flex-col lg:flex-row items-center justify-between gap-6 overflow-hidden relative">
+        <div className="relative z-10 text-center lg:text-left">
           <p className="v-eyebrow mb-1">Total {type === 'receita' ? 'de Entradas' : 'em Despesas'}</p>
           <h2 className={cn("text-4xl md:text-6xl font-black tracking-tighter leading-none", type === 'receita' ? 'text-success' : 'text-danger')}>{fmt(total)}</h2>
           <p className="text-v-muted text-[10px] md:text-sm font-bold uppercase tracking-widest mt-2">{filtered.length} transações processadas</p>
         </div>
-        <div className="z-10 flex gap-2 w-full md:w-auto">
-           <button onClick={exportToCSV} className="v-btn-ghost flex-1 md:flex-none justify-center px-6"><Download className="w-4 h-4 mr-2 inline" /> Planilha</button>
-           <button onClick={exportToPDF} className="v-btn-ghost flex-1 md:flex-none justify-center px-6"><Download className="w-4 h-4 mr-2 inline" /> PDF</button>
+        <div className="z-10 flex flex-wrap lg:flex-nowrap gap-2 w-full lg:w-auto">
+           <button 
+             onClick={onAddNew}
+             className={cn(
+               "flex-1 lg:flex-none px-6 py-3 flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[10px] md:text-xs min-h-[48px] rounded-[14px] transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-lg",
+               type === 'receita' ? "bg-success text-dark shadow-success/20" : 
+               type === 'fixa' ? "bg-primary text-white shadow-primary/20" : 
+               "bg-danger text-white shadow-danger/20"
+             )}
+           >
+             <Plus className="w-4 h-4" /> Novo Registro
+           </button>
+           <button onClick={exportToCSV} className="v-btn-ghost flex-1 lg:flex-none justify-center px-4 md:px-6 min-h-[48px]"><Download className="w-4 h-4 mr-2 inline" /> Planilha</button>
+           <button onClick={exportToPDF} className="v-btn-ghost flex-1 lg:flex-none justify-center px-4 md:px-6 min-h-[48px]"><Download className="w-4 h-4 mr-2 inline" /> PDF</button>
         </div>
         <div className={cn("absolute right-[-100px] top-[-100px] w-[300px] h-[300px] blur-[120px] rounded-full opacity-20", type === 'receita' ? 'bg-success' : 'bg-danger')} />
       </div>
@@ -1205,7 +1339,7 @@ function TransactionForm({ onClose, onSave, initialData, defaultType, categories
     type: initialData?.type || defaultType || 'receita',
     description: initialData?.description || '',
     amount: initialData?.amount || 0,
-    category: initialData?.category || categories[initialData?.type || defaultType || 'receita'][0],
+    category: initialData?.category || (categories[initialData?.type || defaultType || 'receita']?.[0] || 'Geral'),
     date: initialData?.date || new Date().toISOString(),
     note: initialData?.note || '',
     recurring: initialData?.recurring || false
@@ -1213,7 +1347,7 @@ function TransactionForm({ onClose, onSave, initialData, defaultType, categories
 
   useEffect(() => {
     if (!initialData && !defaultType) {
-      setFormData(prev => ({ ...prev, category: categories[formData.type][0] || 'Outros' }));
+      setFormData(prev => ({ ...prev, category: categories[formData.type]?.[0] || 'Geral' }));
     }
   }, [formData.type, categories, initialData, defaultType]);
 
@@ -1230,7 +1364,7 @@ function TransactionForm({ onClose, onSave, initialData, defaultType, categories
             <button
               key={t}
               type="button"
-              onClick={() => setFormData(prev => ({ ...prev, type: t, category: categories[t][0] || 'Outros' }))}
+              onClick={() => setFormData(prev => ({ ...prev, type: t, category: categories[t]?.[0] || 'Geral' }))}
               className={cn(
                 "py-2.5 text-[9px] md:text-[10px] font-black rounded-[15px] transition-all uppercase tracking-widest leading-none",
                 formData.type === t 
@@ -1252,17 +1386,12 @@ function TransactionForm({ onClose, onSave, initialData, defaultType, categories
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="v-eyebrow pl-1">Valor (R$)</label>
-              <input 
+              <CurrencyInput 
                 required 
-                type="number" 
-                step="0.01" 
                 placeholder="0,00"
                 className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors font-mono font-bold text-sm" 
-                value={formData.amount === 0 && !initialData ? '' : formData.amount} 
-                onChange={e => {
-                  const val = parseFloat(e.target.value);
-                  setFormData(p => ({ ...p, amount: isNaN(val) ? 0 : val }));
-                }} 
+                value={formData.amount} 
+                onChange={val => setFormData(p => ({ ...p, amount: val }))} 
               />
             </div>
             <div className="space-y-2">
@@ -1435,10 +1564,21 @@ function AnnualView({ transactions, selectedYear, fmt, userName }: { transaction
 
 
 
-function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, onToggleValues }: { categories: CategoryMap, onUpdate: (cats: CategoryMap) => void, theme: 'light' | 'dark', onThemeChange: (t: 'light' | 'dark') => void, showValues: boolean, onToggleValues: () => void }) {
+function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, onToggleValues, user, onUpdateProfile }: { categories: CategoryMap, onUpdate: (cats: CategoryMap) => void, theme: 'light' | 'dark', onThemeChange: (t: 'light' | 'dark') => void, showValues: boolean, onToggleValues: () => void, user: User | null, onUpdateProfile: (name: string) => Promise<void> }) {
   const [newCat, setNewCat] = useState('');
   const [activeType, setActiveType] = useState<TransactionType>('receita');
-  const [settingsTab, setSettingsTab] = useState<'categories' | 'system'>('categories');
+  const [settingsTab, setSettingsTab] = useState<'categories' | 'system' | 'profile'>('profile');
+  const [nameInput, setNameInput] = useState(user?.displayName || '');
+  const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [currentTipIndex, setCurrentTipIndex] = useState(0);
+
+  useEffect(() => {
+    setCurrentTipIndex(Math.floor(Math.random() * POSITIVE_TIPS.length));
+  }, []);
+
+  useEffect(() => {
+    setNameInput(user?.displayName || '');
+  }, [user?.displayName]);
 
   const addCategory = () => {
     if (!newCat.trim()) return;
@@ -1469,7 +1609,16 @@ function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, 
           <h2 className="text-3xl md:text-4xl font-black tracking-tighter leading-none mb-4">Configurações</h2>
           <p className="text-v-muted text-sm md:text-base max-w-xl">Gerencie categorias, preferências do sistema e personalizações da sua conta.</p>
           
-          <div className="flex gap-4 mt-8">
+          <div className="flex flex-wrap gap-4 mt-8">
+            <button 
+              onClick={() => setSettingsTab('profile')}
+              className={cn(
+                "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                settingsTab === 'profile' ? "bg-white text-dark shadow-xl" : "bg-white/5 text-v-muted hover:bg-white/10"
+              )}
+            >
+              Perfil
+            </button>
             <button 
               onClick={() => setSettingsTab('categories')}
               className={cn(
@@ -1493,14 +1642,79 @@ function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, 
         <div className="absolute right-[-20px] top-[-20px] w-48 h-48 bg-primary/10 blur-[60px] rounded-full" />
       </div>
 
-      {settingsTab === 'categories' ? (
+      {settingsTab === 'profile' ? (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="v-panel p-8 space-y-6 max-w-2xl">
+            <h3 className="text-xl font-black tracking-tighter mb-4 flex items-center gap-2">
+              <Check className="w-5 h-5 text-secondary" /> Personalização do Perfil
+            </h3>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="v-eyebrow pl-1">Como você quer ser chamado?</label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input 
+                    type="text" 
+                    placeholder="Ex: Luiz, Admin..." 
+                    className="flex-1 bg-white/5 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm font-bold"
+                    value={nameInput}
+                    onChange={e => setNameInput(e.target.value)}
+                  />
+                  <button 
+                    onClick={async () => {
+                      if (!nameInput.trim()) return;
+                      setIsUpdatingName(true);
+                      await onUpdateProfile(nameInput.trim());
+                      setIsUpdatingName(false);
+                    }}
+                    disabled={isUpdatingName || nameInput.trim() === (user?.displayName || '')}
+                    className="v-btn-primary px-8 py-4 disabled:opacity-50 min-w-[140px]"
+                  >
+                    {isUpdatingName ? 'Salvando...' : 'Salvar Alteração'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-v-muted uppercase font-black tracking-widest pl-1 mt-1">Este nome será usado para as saudações dinâmicas no cabeçalho.</p>
+              </div>
+
+              <div className="pt-6 border-t border-v-border opacity-60">
+                <p className="v-eyebrow mb-1">E-mail de Cadastro</p>
+                <p className="text-sm font-bold text-v-text-primary">{user?.email}</p>
+                <p className="text-[10px] text-v-muted uppercase font-black tracking-widest mt-1">Este e-mail é usado para seu login seguro.</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-secondary/5 border border-secondary/20 group relative overflow-hidden">
+                <div className="flex justify-between items-start mb-1">
+                  <p className="text-[11px] font-bold text-secondary uppercase tracking-widest">Dica Positiva</p>
+                  <button 
+                    onClick={() => setCurrentTipIndex(Math.floor(Math.random() * POSITIVE_TIPS.length))}
+                    className="p-1 hover:bg-secondary/10 rounded-lg transition-all text-secondary"
+                    title="Novo pensamento"
+                  >
+                    <Shuffle className="w-3 h-3" />
+                  </button>
+                </div>
+                <AnimatePresence mode="wait">
+                  <motion.p 
+                    key={currentTipIndex}
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -5 }}
+                    className="text-xs text-v-muted leading-relaxed italic"
+                  >
+                    "{POSITIVE_TIPS[currentTipIndex]}" — Continue firme em seus objetivos, {user?.displayName || 'Usuário'}!
+                  </motion.p>
+                </AnimatePresence>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : settingsTab === 'categories' ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="lg:col-span-1 space-y-2">
-            {(['receita', 'fixa', 'variavel'] as TransactionType[]).map(t => (
+            {(['receita', 'fixa', 'variavel', 'metas'] as (keyof CategoryMap)[]).map(t => (
               <button
                 key={t}
                 type="button"
-                onClick={() => setActiveType(t)}
+                onClick={() => setActiveType(t as any)}
                 className={cn(
                   "w-full flex items-center justify-between p-5 rounded-[20px] border transition-all font-bold text-sm uppercase tracking-widest",
                   activeType === t 
@@ -1508,7 +1722,7 @@ function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, 
                     : "bg-v-bg border-v-border text-v-muted hover:bg-white/[0.08]"
                 )}
               >
-                {t === 'receita' ? 'Receitas' : t === 'fixa' ? 'Despesas Fixas' : 'Despesas Variáveis'}
+                {t === 'receita' ? 'Receitas' : t === 'fixa' ? 'Despesas Fixas' : t === 'variavel' ? 'Despesas Variáveis' : 'Metas'}
                 {activeType === t && <Check className="w-4 h-4 text-secondary" />}
               </button>
             ))}
@@ -1632,14 +1846,20 @@ function SettingsView({ categories, onUpdate, theme, onThemeChange, showValues, 
   );
 }
 
-function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: FinancialGoal[], onAdd: (g: Omit<FinancialGoal, 'id'>) => void, onUpdate: (id: string, amount: number) => void, onDelete: (id: string) => void, fmt: (v: number) => string }) {
+function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt, categories }: { goals: FinancialGoal[], onAdd: (g: Omit<FinancialGoal, 'id'>) => void, onUpdate: (id: string, data: Partial<FinancialGoal>) => void, onDelete: (id: string) => void, fmt: (v: number) => string, categories: string[] }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newGoal, setNewGoal] = useState<Partial<FinancialGoal>>({
     title: '',
     targetAmount: 0,
     currentAmount: 0,
-    category: 'Reserva'
+    category: categories[0] || 'Reserva'
   });
+
+  useEffect(() => {
+    if (categories.length > 0 && !categories.includes(newGoal.category || '')) {
+      setNewGoal(p => ({ ...p, category: categories[0] }));
+    }
+  }, [categories]);
 
   const addGoal = () => {
     if (!newGoal.title || !newGoal.targetAmount) return;
@@ -1648,7 +1868,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: Financial
       title: newGoal.title!,
       targetAmount: Number(newGoal.targetAmount),
       currentAmount: Number(newGoal.currentAmount) || 0,
-      category: newGoal.category || 'Geral',
+      category: newGoal.category || categories[0] || 'Geral',
     };
 
     if (newGoal.deadline) {
@@ -1694,55 +1914,45 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: Financial
                   <input 
                     type="text" 
                     placeholder="Ex: Viagem, Carro novo..." 
-                    className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm"
+                    className="w-full bg-v-card/40 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm"
                     value={newGoal.title}
                     onChange={e => setNewGoal(p => ({ ...p, title: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="v-eyebrow pl-1">Valor Alvo (R$)</label>
-                  <input 
-                    type="number" 
+                  <CurrencyInput 
                     placeholder="0,00" 
-                    className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm font-mono"
-                    value={newGoal.targetAmount === 0 ? '' : newGoal.targetAmount}
-                    onChange={e => {
-                      const val = parseFloat(e.target.value);
-                      setNewGoal(p => ({ ...p, targetAmount: isNaN(val) ? 0 : val }));
-                    }}
+                    className="w-full bg-v-card/40 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm font-mono"
+                    value={String(newGoal.targetAmount)}
+                    onChange={val => setNewGoal(p => ({ ...p, targetAmount: val }))}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="v-eyebrow pl-1">Já Poupei (R$)</label>
-                  <input 
-                    type="number" 
+                  <CurrencyInput 
                     placeholder="0,00" 
-                    className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm font-mono"
-                    value={newGoal.currentAmount === 0 ? '' : newGoal.currentAmount}
-                    onChange={e => {
-                      const val = parseFloat(e.target.value);
-                      setNewGoal(p => ({ ...p, currentAmount: isNaN(val) ? 0 : val }));
-                    }}
+                    className="w-full bg-v-card/40 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm font-mono"
+                    value={String(newGoal.currentAmount)}
+                    onChange={val => setNewGoal(p => ({ ...p, currentAmount: val }))}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="v-eyebrow pl-1">Categoria</label>
                   <select 
-                    className="w-full bg-white/5 border border-v-border rounded-[14px] p-4 text-white outline-none focus:border-secondary transition-colors text-sm"
+                    className="w-full bg-v-card/40 border border-v-border rounded-[14px] p-4 text-v-text-primary outline-none focus:border-secondary transition-colors text-sm"
                     value={newGoal.category}
                     onChange={e => setNewGoal(p => ({ ...p, category: e.target.value }))}
                   >
-                    <option value="Reserva" className="bg-v-bg text-v-text-primary">Reserva</option>
-                    <option value="Lazer" className="bg-v-bg text-v-text-primary">Lazer</option>
-                    <option value="Educação" className="bg-v-bg text-v-text-primary">Educação</option>
-                    <option value="Bens" className="bg-v-bg text-v-text-primary">Bens</option>
-                    <option value="Futuro" className="bg-v-bg text-v-text-primary">Futuro</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat} className="bg-v-bg text-v-text-primary">{cat}</option>
+                    ))}
                   </select>
                 </div>
               </div>
               <div className="flex gap-3">
                 <button onClick={addGoal} className="v-btn-primary flex-1 py-3 text-sm">Criar Meta</button>
-                <button onClick={() => setIsAdding(false)} className="v-panel px-6 py-3 text-sm font-bold text-v-muted hover:text-white transition-colors">Cancelar</button>
+                <button onClick={() => setIsAdding(false)} className="v-panel px-6 py-3 text-sm font-bold text-v-muted hover:text-v-text-primary transition-colors">Cancelar</button>
               </div>
             </div>
           </motion.div>
@@ -1751,7 +1961,7 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: Financial
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
         {goals.map(goal => (
-          <GoalItem key={goal.id} goal={goal} onUpdate={onUpdate} onDelete={onDelete} fmt={fmt} />
+          <GoalItem key={goal.id} goal={goal} onUpdate={onUpdate} onDelete={onDelete} fmt={fmt} categories={categories} />
         ))}
         {goals.length === 0 && !isAdding && (
           <div className="col-span-full v-panel p-20 text-center flex flex-col items-center justify-center opacity-40 border-dashed border-2">
@@ -1765,10 +1975,18 @@ function GoalsView({ goals, onAdd, onUpdate, onDelete, fmt }: { goals: Financial
   );
 }
 
-function GoalItem({ goal, onUpdate, onDelete, fmt }: any) {
+function GoalItem({ goal, onUpdate, onDelete, fmt, categories }: any) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState({ title: goal.title, category: goal.category });
+
   const target = goal.targetAmount || 1; // Prevent division by zero
   const percent = Math.min(100, Math.max(0, (goal.currentAmount / target) * 100));
   const remaining = Math.max(0, goal.targetAmount - goal.currentAmount);
+
+  const handleSave = () => {
+    onUpdate(goal.id, editData);
+    setIsEditing(false);
+  };
 
   return (
     <motion.div 
@@ -1777,7 +1995,13 @@ function GoalItem({ goal, onUpdate, onDelete, fmt }: any) {
       animate={{ opacity: 1, scale: 1 }}
       className="v-panel p-6 md:p-8 space-y-6 group hover:translate-y-[-4px] transition-all relative overflow-hidden"
     >
-      <div className="absolute top-0 right-0 p-1">
+      <div className="absolute top-0 right-0 p-1 flex items-center gap-1">
+        <button 
+          onClick={() => setIsEditing(!isEditing)}
+          className="p-2 text-v-muted hover:text-primary hover:bg-primary/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+        >
+          <Edit2 className="w-4 h-4" />
+        </button>
         <button 
           onClick={() => onDelete(goal.id)}
           className="p-2 text-v-muted hover:text-danger hover:bg-danger/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
@@ -1790,12 +2014,40 @@ function GoalItem({ goal, onUpdate, onDelete, fmt }: any) {
         <div className="w-12 h-12 rounded-[16px] bg-white/5 border border-v-border flex items-center justify-center">
           {goal.category === 'Lazer' ? <Shuffle className="w-6 h-6 text-secondary" /> : 
            goal.category === 'Educação' ? <Award className="w-6 h-6 text-primary" /> :
-           goal.category === 'Bens' ? <Wallet className="w-6 h-6 text-warning" /> :
+           goal.category === 'Viagem' ? <Flag className="w-6 h-6 text-v-accent" /> :
+           goal.category === 'Carro' ? <TrendingUp className="w-6 h-6 text-danger" /> :
            <Flag className="w-6 h-6 text-success" />}
         </div>
-        <div>
-          <span className="v-eyebrow text-[10px]">{goal.category}</span>
-          <h3 className="text-xl font-black tracking-tight text-v-text-primary">{goal.title}</h3>
+        <div className="flex-1">
+          {isEditing ? (
+            <div className="space-y-2 mt-2">
+              <input 
+                autoFocus
+                className="w-full bg-v-card border border-v-border rounded-lg p-2 text-sm text-v-text-primary font-bold outline-none focus:border-primary"
+                value={editData.title}
+                onChange={e => setEditData(p => ({ ...p, title: e.target.value }))}
+              />
+              <div className="flex gap-2">
+                <select 
+                  className="flex-1 bg-v-card border border-v-border rounded-lg p-2 text-[10px] text-v-text-primary font-black uppercase tracking-widest outline-none focus:border-primary"
+                  value={editData.category}
+                  onChange={e => setEditData(p => ({ ...p, category: e.target.value }))}
+                >
+                  {categories.map((cat: string) => (
+                    <option key={cat} value={cat} className="bg-v-bg">{cat}</option>
+                  ))}
+                </select>
+                <button onClick={handleSave} className="bg-success/20 text-success p-2 rounded-lg hover:bg-success/30 transition-all">
+                  <Check className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <span className="v-eyebrow text-[10px]">{goal.category}</span>
+              <h3 className="text-xl font-black tracking-tight text-v-text-primary">{goal.title}</h3>
+            </>
+          )}
         </div>
       </div>
 
@@ -1845,55 +2097,52 @@ function GoalItem({ goal, onUpdate, onDelete, fmt }: any) {
         <div className="flex items-center gap-2">
           <button 
             type="button"
-            onClick={() => onUpdate(goal.id, Math.max(0, goal.currentAmount - 100))}
-            className="p-3 bg-white/5 border border-v-border rounded-[12px] text-v-muted hover:text-danger hover:border-danger/30 transition-all"
+            onClick={() => onUpdate(goal.id, { currentAmount: Math.max(0, goal.currentAmount - 100) })}
+            className="p-3 bg-v-card/40 border border-v-border rounded-[12px] text-v-muted hover:text-danger hover:border-danger/30 hover:bg-danger/10 transition-all"
             title="Remover R$ 100"
           >
             <Minus className="w-4 h-4" />
           </button>
           
           <div className="relative flex-1 group">
-            <input 
-              type="number" 
-              className="w-full bg-white/5 border border-v-border rounded-[12px] p-3 text-white text-center font-mono font-bold text-sm outline-none focus:border-secondary transition-all"
-              value={goal.currentAmount === 0 ? '' : goal.currentAmount}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                onUpdate(goal.id, isNaN(val) ? 0 : val);
-              }}
+            <CurrencyInput 
+              className="w-full bg-v-card/40 border border-v-border rounded-[12px] p-3 text-v-text-primary text-center font-mono font-bold text-sm outline-none focus:border-secondary transition-all"
+              value={goal.currentAmount}
+              onChange={(val) => onUpdate(goal.id, { currentAmount: val })}
+              placeholder="0,00"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-v-muted font-black opacity-0 group-focus-within:opacity-100 transition-opacity uppercase">BRL</span>
           </div>
-
+ 
           <button 
             type="button"
-            onClick={() => onUpdate(goal.id, Math.min(goal.targetAmount, goal.currentAmount + 100))}
-            className="p-3 bg-white/5 border border-v-border rounded-[12px] text-v-muted hover:text-success hover:border-success/30 transition-all"
+            onClick={() => onUpdate(goal.id, { currentAmount: Math.min(goal.targetAmount, goal.currentAmount + 100) })}
+            className="p-3 bg-v-card/40 border border-v-border rounded-[12px] text-v-muted hover:text-success hover:border-success/30 hover:bg-success/10 transition-all"
             title="Adicionar R$ 100"
           >
             <Plus className="w-4 h-4" />
           </button>
         </div>
-
+ 
         <div className="flex gap-2">
           <button 
             type="button" 
-            onClick={() => onUpdate(goal.id, Math.min(goal.targetAmount, goal.currentAmount + 50))}
-            className="flex-1 py-1.5 bg-white/5 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-white transition-all uppercase tracking-widest"
+            onClick={() => onUpdate(goal.id, { currentAmount: Math.min(goal.targetAmount, goal.currentAmount + 50) })}
+            className="flex-1 py-1.5 bg-v-card/40 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-v-text-primary hover:bg-v-card transition-all uppercase tracking-widest"
           >
             + R$ 50
           </button>
           <button 
             type="button" 
-            onClick={() => onUpdate(goal.id, Math.min(goal.targetAmount, goal.currentAmount + 1000))}
-            className="flex-1 py-1.5 bg-white/5 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-white transition-all uppercase tracking-widest"
+            onClick={() => onUpdate(goal.id, { currentAmount: Math.min(goal.targetAmount, goal.currentAmount + 1000) })}
+            className="flex-1 py-1.5 bg-v-card/40 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-v-text-primary hover:bg-v-card transition-all uppercase tracking-widest"
           >
             + R$ 1k
           </button>
           <button 
             type="button" 
-            onClick={() => onUpdate(goal.id, goal.targetAmount)}
-            className="flex-1 py-1.5 bg-white/5 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-success transition-all uppercase tracking-widest"
+            onClick={() => onUpdate(goal.id, { currentAmount: goal.targetAmount })}
+            className="flex-1 py-1.5 bg-v-card/40 border border-v-border rounded-lg text-[9px] font-black text-v-muted hover:text-success hover:bg-success/10 transition-all uppercase tracking-widest"
           >
             Meta!
           </button>

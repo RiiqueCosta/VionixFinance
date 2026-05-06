@@ -24,10 +24,12 @@ export interface CategoryMap {
   receita: string[];
   fixa: string[];
   variavel: string[];
+  metas: string[];
 }
 
 export const DEFAULT_CATEGORIES: CategoryMap = {
   receita: ['Salário', 'Clientes', 'Freelance', 'Investimentos', 'Suporte TI', 'Projetos', 'Outros'],
   fixa: ['Salário', 'Aluguel', 'Internet', 'Servidores', 'Assinaturas', 'Seguros', 'Outros'],
-  variavel: ['Salário', 'Cartão Nubank', 'Alimentação', 'Transporte', 'Ferramentas', 'Viagens', 'Lazer', 'Outros']
+  variavel: ['Salário', 'Cartão Nubank', 'Alimentação', 'Transporte', 'Ferramentas', 'Viagens', 'Lazer', 'Outros'],
+  metas: ['Reserva', 'Viagem', 'Carro', 'Casa', 'Investimento', 'Educação', 'Geral']
 };
