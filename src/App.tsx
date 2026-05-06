@@ -22,6 +22,8 @@ import {
   doc, 
   setDoc, 
   getDoc,
+  getDocs,
+  writeBatch,
   serverTimestamp,
   Timestamp,
   getDocFromServer
@@ -55,8 +57,24 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  // Legacy global handler - simplified as we now use a state-based one in the App component
-  console.error('Firestore Error:', error);
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 import { 
   LineChart, 
@@ -80,7 +98,16 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Transaction, TransactionType, DEFAULT_CATEGORIES, CategoryMap, FinancialGoal } from './types';
+import { 
+  Transaction, 
+  TransactionType, 
+  DEFAULT_CATEGORIES, 
+  CategoryMap, 
+  FinancialGoal,
+  CreditCard,
+  CreditTransaction,
+  Invoice
+} from './types';
 import { 
   LayoutDashboard, 
   TrendingUp, 
@@ -116,7 +143,11 @@ import {
   Eye,
   EyeOff,
   Bell,
-  PieChart as PieIcon
+  PieChart as PieIcon,
+  CreditCard as CardIcon,
+  Info,
+  AlertTriangle,
+  CreditCard as CreditIcon
 } from 'lucide-react';
 // Utils
 function cn(...inputs: ClassValue[]) {
@@ -143,10 +174,14 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
 
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'receitas' | 'fixas' | 'variaveis' | 'anual' | 'graficos' | 'metas' | 'config'>('dashboard');
+  const [currentPage, setCurrentPage] = useState<'dashboard' | 'receitas' | 'fixas' | 'variaveis' | 'anual' | 'graficos' | 'metas' | 'config' | 'cartoes'>('dashboard');
   const [categories, setCategories] = useState<CategoryMap>(DEFAULT_CATEGORIES);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<FinancialGoal[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
+  const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -192,16 +227,6 @@ export default function App() {
       document.documentElement.classList.remove('light');
     }
   }, [theme]);
-
-  const handleFirestoreError = useCallback((error: any, operationType: OperationType, path: string | null) => {
-    const errInfo = {
-      error: error?.message || String(error),
-      operationType,
-      path,
-      userId: user?.uid
-    };
-    console.error('Firestore Error:', JSON.stringify(errInfo));
-  }, [user]);
 
   // Firestore Sync
   useEffect(() => {
@@ -259,10 +284,34 @@ export default function App() {
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, `users/${user.uid}/settings/data`));
 
+    const ccRef = collection(db, 'creditCards');
+    const ccQuery = query(ccRef, where('userId', '==', user.uid));
+    const unsubscribeCards = onSnapshot(ccQuery, (snapshot) => {
+      setCreditCards(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CreditCard)));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'creditCards'));
+
+    const ctRef = collection(db, 'creditTransactions');
+    const ctQuery = query(ctRef, where('userId', '==', user.uid));
+    const unsubscribeCreditTxs = onSnapshot(ctQuery, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CreditTransaction));
+      // Sort by date descending
+      docs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setCreditTransactions(docs);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'creditTransactions'));
+
+    const invRef = collection(db, 'invoices');
+    const invQuery = query(invRef, where('userId', '==', user.uid));
+    const unsubscribeInvoices = onSnapshot(invQuery, (snapshot) => {
+      setInvoices(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Invoice)));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'invoices'));
+
     return () => {
       unsubscribeTransactions();
       unsubscribeGoals();
       unsubscribeSettings();
+      unsubscribeCards();
+      unsubscribeCreditTxs();
+      unsubscribeInvoices();
     };
   }, [user, handleFirestoreError]);
 
@@ -583,6 +632,9 @@ export default function App() {
             <NavBtn active={currentPage === 'metas'} onClick={() => { setCurrentPage('metas'); setIsSidebarOpen(false); }}>
               <Target className="w-4 h-4" /> Metas
             </NavBtn>
+            <NavBtn active={currentPage === 'cartoes'} onClick={() => { setCurrentPage('cartoes'); setIsSidebarOpen(false); }}>
+              <CreditIcon className="w-4 h-4" /> Cartões
+            </NavBtn>
             <NavBtn active={currentPage === 'anual'} onClick={() => { setCurrentPage('anual'); setIsSidebarOpen(false); }}>
               <Calendar className="w-4 h-4" /> Relatórios
             </NavBtn>
@@ -708,6 +760,83 @@ export default function App() {
                 )}
                 {currentPage === 'metas' && (
                   <GoalsView goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} fmt={fmt} categories={categories.metas} />
+                )}
+                {currentPage === 'cartoes' && (
+                  <CreditCardsView 
+                    cards={creditCards} 
+                    transactions={creditTransactions}
+                    invoices={invoices}
+                    categories={categories}
+                    fmt={fmt}
+                    onAddCard={async (card) => {
+                      if (!user) return;
+                      await addDoc(collection(db, 'creditCards'), { ...card, userId: user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+                    }}
+                    onDeleteCard={async (id) => {
+                      if (!user) return;
+                      await deleteDoc(doc(db, 'creditCards', id));
+                      // Should also delete associated transactions/invoices or handle them
+                    }}
+                    onAddTransaction={async (tx, card) => {
+                      if (!user) return;
+                      const { installmentsTotal, amount, date, description, category } = tx;
+                      const groupId = crypto.randomUUID();
+                      const txDate = parseISO(date);
+                      
+                      for (let i = 1; i <= installmentsTotal; i++) {
+                         // Calculate which month this installment belongs to
+                         const currentTxDate = new Date(txDate);
+                         currentTxDate.setMonth(txDate.getMonth() + (i - 1));
+                         
+                         let invoiceMonth = currentTxDate.getMonth();
+                         let invoiceYear = currentTxDate.getFullYear();
+                         
+                         if (currentTxDate.getDate() > card.closingDay) {
+                           invoiceMonth += 1;
+                           if (invoiceMonth > 11) {
+                             invoiceMonth = 0;
+                             invoiceYear += 1;
+                           }
+                         }
+
+                         await addDoc(collection(db, 'creditTransactions'), {
+                           userId: user.uid,
+                           cardId: card.id,
+                           description: installmentsTotal > 1 ? `${description} (${i}/${installmentsTotal})` : description,
+                           amount: Number((amount / installmentsTotal).toFixed(2)),
+                           category,
+                           date: currentTxDate.toISOString(),
+                           installmentsTotal,
+                           installmentNumber: i,
+                           groupId,
+                           invoiceMonth,
+                           invoiceYear,
+                           createdAt: serverTimestamp()
+                         });
+                      }
+                    }}
+                    onDeleteTransaction={async (tx) => {
+                      if (!user) return;
+                      const path = `creditTransactions/${tx.id}`;
+                      try {
+                        if (tx.installmentsTotal > 1) {
+                          const q = query(collection(db, 'creditTransactions'), 
+                            where('userId', '==', user.uid),
+                            where('groupId', '==', tx.groupId)
+                          );
+                          const snap = await getDocs(q);
+                          const batch = writeBatch(db);
+                          snap.docs.forEach(d => batch.delete(d.ref));
+                          await batch.commit();
+                        } else {
+                          await deleteDoc(doc(db, 'creditTransactions', tx.id));
+                        }
+                      } catch (error) {
+                        console.error("Delete failed:", error);
+                        handleFirestoreError(error, OperationType.DELETE, path);
+                      }
+                    }}
+                  />
                 )}
                 {currentPage === 'config' && (
                   <SettingsView 
@@ -2149,6 +2278,462 @@ function GoalItem({ goal, onUpdate, onDelete, fmt, categories }: any) {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function CreditCardsView({ cards, transactions, invoices, categories, fmt, onAddCard, onDeleteCard, onAddTransaction, onDeleteTransaction }: { 
+  cards: CreditCard[], 
+  transactions: CreditTransaction[], 
+  invoices: Invoice[], 
+  categories: CategoryMap, 
+  fmt: (v: number) => string,
+  onAddCard: (card: Omit<CreditCard, 'id'>) => Promise<void>,
+  onDeleteCard: (id: string) => Promise<void>,
+  onAddTransaction: (tx: any, card: CreditCard) => Promise<void>,
+  onDeleteTransaction: (tx: CreditTransaction) => Promise<void>
+}) {
+  const [activeCardId, setActiveCardId] = useState<string | null>(cards.length > 0 ? cards[0].id : null);
+  const [isAddingCard, setIsAddingCard] = useState(false);
+  const [isAddingTx, setIsAddingTx] = useState(false);
+  const [newCard, setNewCard] = useState({ name: '', limitTotal: 0, closingDay: 10, dueDay: 20, color: '#6C4BFF' });
+  const [newTx, setNewTx] = useState({ description: '', amount: 0, category: 'Outros', date: format(new Date(), 'yyyy-MM-dd'), installmentsTotal: 1 });
+
+  const [txToDelete, setTxToDelete] = useState<CreditTransaction | null>(null);
+
+  useEffect(() => {
+    if (!activeCardId && cards.length > 0) setActiveCardId(cards[0].id);
+  }, [cards, activeCardId]);
+
+  const activeCard = cards.find(c => c.id === activeCardId);
+  const cardTransactions = transactions.filter(t => t.cardId === activeCardId);
+  
+  const usedLimit = cardTransactions.reduce((acc, t) => acc + t.amount, 0);
+  const availableLimit = activeCard ? activeCard.limitTotal - usedLimit : 0;
+  const usedPercent = activeCard ? Math.min(100, (usedLimit / activeCard.limitTotal) * 100) : 0;
+  
+  const bestDayToBuy = activeCard ? (activeCard.closingDay + 1) : 0;
+
+  // Invoice Logic - Simplification for display
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+  const currentInvoiceTotal = cardTransactions
+    .filter(t => (t as any).invoiceMonth === currentMonth && (t as any).invoiceYear === currentYear)
+    .reduce((s, t) => s + t.amount, 0);
+
+  const nextMonth = (currentMonth + 1) % 12;
+  const nextYear = currentMonth === 11 ? currentYear + 1 : currentYear;
+  const nextInvoiceTotal = cardTransactions
+    .filter(t => (t as any).invoiceMonth === nextMonth && (t as any).invoiceYear === nextYear)
+    .reduce((s, t) => s + t.amount, 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="v-panel p-6 md:p-10 bg-gradient-to-br from-primary/10 to-secondary/5 relative overflow-hidden">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <p className="v-eyebrow flex items-center gap-2"><CardIcon className="w-3 h-3" /> Gestão de Crédito</p>
+            <h2 className="text-3xl md:text-4xl font-black tracking-tighter leading-none mb-4">Meus Cartões</h2>
+            <div className="flex flex-wrap gap-2">
+               {cards.map(card => (
+                 <button 
+                  key={card.id}
+                  onClick={() => setActiveCardId(card.id)}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border",
+                    activeCardId === card.id ? "bg-white text-dark shadow-xl border-white" : "bg-white/5 text-v-muted border-v-border hover:bg-white/10"
+                  )}
+                 >
+                   {card.name}
+                 </button>
+               ))}
+               <button 
+                onClick={() => setIsAddingCard(true)}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-secondary/10 text-secondary border border-secondary/30 hover:bg-secondary/20 transition-all flex items-center gap-2"
+               >
+                 <Plus className="w-3 h-3" /> Adicionar
+               </button>
+            </div>
+          </div>
+          {activeCard && (
+            <button 
+              onClick={() => setIsAddingTx(true)}
+              className="v-btn-primary py-4 px-8 flex items-center justify-center gap-2"
+            >
+              <PlusCircle className="w-5 h-5" /> Nova Compra
+            </button>
+          )}
+        </div>
+      </div>
+
+      {activeCard ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-20">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Main Summary Card */}
+            <div className="v-panel p-8 relative overflow-hidden group">
+              <div className="absolute right-[-40px] top-[-40px] w-64 h-64 opacity-10 blur-3xl rounded-full" style={{ backgroundColor: activeCard.color }} />
+              
+              <div className="flex justify-between items-start mb-8">
+                <div>
+                  <h3 className="text-2xl font-black tracking-tighter mb-1 flex items-center gap-2">
+                    {activeCard.name}
+                    <span className="text-[10px] bg-white/10 px-2 py-1 rounded-lg font-black uppercase tracking-widest text-v-muted">Crédito</span>
+                  </h3>
+                  <p className="text-xs font-bold text-v-muted">Melhor dia para compra: <span className="text-secondary">{bestDayToBuy}</span></p>
+                </div>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center border border-v-border" style={{ borderColor: `${activeCard.color}40`, backgroundColor: `${activeCard.color}10` }}>
+                  <CreditIcon className="w-6 h-6" style={{ color: activeCard.color }} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 mb-8">
+                <div>
+                  <p className="v-eyebrow mb-1">Disponível</p>
+                  <p className="text-xl font-black text-v-text-primary">{fmt(availableLimit)}</p>
+                </div>
+                <div>
+                  <p className="v-eyebrow mb-1">Utilizado</p>
+                  <p className="text-xl font-black text-danger">{fmt(usedLimit)}</p>
+                </div>
+                <div>
+                  <p className="v-eyebrow mb-1">Limite Total</p>
+                  <p className="text-xl font-black text-v-muted">{fmt(activeCard.limitTotal)}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-v-muted">
+                  <span>Uso do Limite</span>
+                  <span className={cn(usedPercent > 80 ? "text-danger" : "text-v-muted")}>{usedPercent.toFixed(0)}%</span>
+                </div>
+                <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-v-border">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${usedPercent}%` }}
+                    className={cn("h-full transition-all", usedPercent > 80 ? "bg-danger" : "bg-gradient-to-r from-primary to-secondary")}
+                  />
+                </div>
+              </div>
+              
+              {usedPercent > 80 && (
+                <div className="mt-4 flex items-center gap-2 p-3 bg-danger/10 border border-danger/20 rounded-xl animate-pulse">
+                  <AlertTriangle className="w-4 h-4 text-danger" />
+                  <p className="text-[10px] font-bold text-danger uppercase tracking-widest">Atenção: Você atingiu 80% do seu limite disponível!</p>
+                </div>
+              )}
+            </div>
+
+            {/* Recent Transactions */}
+            <div className="v-panel p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <p className="v-eyebrow">Histórico</p>
+                  <h4 className="text-lg font-black tracking-tighter">Últimos Lançamentos</h4>
+                </div>
+                <Filter className="w-4 h-4 text-v-muted" />
+              </div>
+
+              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 scrollbar-hide">
+                {cardTransactions.map(t => (
+                  <div key={t.id} className="flex items-center justify-between p-3 hover:bg-white/5 rounded-xl transition-all border border-transparent hover:border-v-border">
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTxToDelete(t);
+                        }}
+                        className="p-2.5 rounded-lg bg-danger/10 border border-danger/20 text-danger hover:bg-danger/20 transition-all shadow-sm"
+                        title="Excluir transação"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-v-muted font-black uppercase tracking-wider mb-0.5">{t.category}</p>
+                        <p className="text-sm font-bold truncate max-w-[200px]">{t.description}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-danger">-{fmt(t.amount)}</p>
+                      <p className="text-[10px] text-v-muted font-bold font-mono">{format(parseISO(t.date), 'dd MMM yyyy', { locale: ptBR })}</p>
+                    </div>
+                  </div>
+                ))}
+                {cardTransactions.length === 0 && (
+                  <div className="py-12 text-center opacity-30">
+                    <CreditIcon className="w-12 h-12 mx-auto mb-3" />
+                    <p className="text-xs font-black uppercase tracking-widest">Nenhuma compra registrada</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Invoices & Insights */}
+          <div className="space-y-6">
+            {/* Invoice Summary */}
+            <div className="v-panel p-6 border-l-4 border-l-primary">
+              <p className="v-eyebrow mb-4">Próximos Vencimentos</p>
+              
+              <div className="space-y-6">
+                <div className="p-4 bg-white/5 rounded-2xl border border-v-border relative overflow-hidden group">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="text-[10px] font-black text-v-muted uppercase tracking-widest">Fatura Atual</p>
+                      <h5 className="text-xl font-black text-v-text-primary">{fmt(currentInvoiceTotal)}</h5>
+                    </div>
+                    <span className="text-[6px] px-2 py-0.5 bg-primary/20 text-primary border border-primary/30 rounded-full font-black uppercase tracking-tighter">Aberta</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-[10px] font-bold text-v-muted">
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Fechamento: {activeCard.closingDay}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> Vencimento: {activeCard.dueDay}
+                    </div>
+                  </div>
+                  <div className="absolute right-[-10px] bottom-[-10px] w-12 h-12 opacity-5 scale-0 group-hover:scale-150 transition-all">
+                    <LogOut className="w-full h-full text-white rotate-45" />
+                  </div>
+                </div>
+
+                <div className="p-4 bg-white/5 rounded-2xl border border-v-border opacity-60">
+                   <p className="text-[10px] font-black text-v-muted uppercase tracking-widest mb-1">Próxima Fatura (Projeção)</p>
+                   <h5 className="text-lg font-black text-v-text-primary">{fmt(nextInvoiceTotal)}</h5>
+                   <p className="text-[9px] font-bold text-v-muted mt-1 italic leading-tight">Inclui parcelas futuras já programadas para este período.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Insights */}
+            <div className="v-panel p-6 bg-secondary/5 border border-secondary/20">
+               <h4 className="text-sm font-black uppercase tracking-widest text-secondary mb-4 flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" /> Resumo Inteligente
+               </h4>
+               <div className="space-y-4">
+                  <div className="bg-white/5 p-3 rounded-xl">
+                    <p className="text-[11px] text-v-text-primary leading-relaxed">
+                      💡 <strong>Dica:</strong> Seus gastos com <strong>{cardTransactions[0]?.category || '...'}</strong> no crédito representam 
+                      a maior parte da sua fatura. Considere despesas à vista para evitar juros.
+                    </p>
+                  </div>
+                  <div className="bg-white/5 p-3 rounded-xl border-l-2 border-l-v-accent">
+                    <p className="text-[11px] text-v-text-primary leading-relaxed">
+                      📅 <strong>Melhor dia:</strong> Compre no dia <strong>{bestDayToBuy}</strong> para ter 
+                      o maior prazo de pagamento possível (quase 40 dias).
+                    </p>
+                  </div>
+               </div>
+            </div>
+
+            <button 
+              onClick={() => onDeleteCard(activeCard.id)}
+              className="w-full p-4 border border-danger/20 text-danger/60 hover:text-danger hover:bg-danger/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+            >
+              <Trash2 className="w-3 h-3" /> Excluir Cartão
+            </button>
+          </div>
+        </div>
+      ) : !isAddingCard ? (
+        <div className="v-panel p-20 text-center opacity-40 border-dashed border-2 flex flex-col items-center justify-center">
+            <CreditIcon className="w-16 h-16 mb-4 text-v-muted" />
+            <p className="text-v-muted italic font-bold uppercase tracking-widest text-sm">Nenhum cartão cadastrado.</p>
+            <p className="text-v-muted text-xs mt-2 max-w-sm">Adicione um novo cartão de crédito para gerenciar seus limites e faturas.</p>
+            <button 
+              onClick={() => setIsAddingCard(true)}
+              className="mt-6 v-btn-primary py-3 px-8 text-xs"
+            >
+              Começar Agora
+            </button>
+        </div>
+      ) : null}
+
+      {/* Add Card Modal */}
+      {isAddingCard && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 bg-black/80 backdrop-blur-md" onClick={() => setIsAddingCard(false)} />
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full max-w-md v-panel p-8">
+            <h3 className="text-2xl font-black mb-6">Novo Cartão</h3>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">Nome do Cartão</label>
+                <input 
+                  className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm focus:border-secondary transition-all outline-none"
+                  placeholder="Ex: Nubank, Inter..."
+                  value={newCard.name}
+                  onChange={e => setNewCard(p => ({ ...p, name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">Limite Total (R$)</label>
+                <CurrencyInput 
+                  value={String(newCard.limitTotal)}
+                  onChange={val => setNewCard(p => ({ ...p, limitTotal: val }))}
+                  className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm font-mono"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="v-eyebrow pl-1">Dia Fechamento</label>
+                  <input 
+                    type="number" min="1" max="31"
+                    className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm"
+                    value={newCard.closingDay}
+                    onChange={e => setNewCard(p => ({ ...p, closingDay: Number(e.target.value) }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="v-eyebrow pl-1">Dia Vencimento</label>
+                  <input 
+                    type="number" min="1" max="31"
+                    className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm"
+                    value={newCard.dueDay}
+                    onChange={e => setNewCard(p => ({ ...p, dueDay: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">Cor Identificadora</label>
+                <div className="flex gap-2">
+                  {['#6C4BFF', '#00D4FF', '#FF4B6E', '#FFB800', '#22C55E', '#A855F7'].map(c => (
+                    <button 
+                      key={c}
+                      onClick={() => setNewCard(p => ({ ...p, color: c }))}
+                      className={cn("w-8 h-8 rounded-full border-2 transition-all", newCard.color === c ? "border-white scale-110" : "border-transparent opacity-50")}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  onClick={async () => {
+                    if (!newCard.name || !newCard.limitTotal) return;
+                    await onAddCard(newCard);
+                    setIsAddingCard(false);
+                    setNewCard({ name: '', limitTotal: 0, closingDay: 10, dueDay: 20, color: '#6C4BFF' });
+                  }}
+                  className="v-btn-primary flex-1 py-4"
+                >
+                  Salvar Cartão
+                </button>
+                <button onClick={() => setIsAddingCard(false)} className="px-6 border border-v-border rounded-xl text-xs font-black uppercase">Cancelar</button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Add Transaction Modal */}
+      {isAddingTx && activeCard && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 bg-black/80 backdrop-blur-md" onClick={() => setIsAddingTx(false)} />
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full max-w-md v-panel p-8">
+            <h3 className="text-2xl font-black mb-6">Novo Gasto</h3>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">O que comprou?</label>
+                <input 
+                  className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm outline-none focus:border-secondary"
+                  placeholder="Ex: Assinatura Netflix, Almoço..."
+                  value={newTx.description}
+                  onChange={e => setNewTx(p => ({ ...p, description: e.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="v-eyebrow pl-1">Valor Total (R$)</label>
+                  <CurrencyInput 
+                    value={String(newTx.amount)}
+                    onChange={val => setNewTx(p => ({ ...p, amount: val }))}
+                    className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="v-eyebrow pl-1">Parcelas</label>
+                  <select 
+                    className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm"
+                    value={newTx.installmentsTotal}
+                    onChange={e => setNewTx(p => ({ ...p, installmentsTotal: Number(e.target.value) }))}
+                  >
+                    {[...Array(12).keys()].map(i => (
+                      <option key={i+1} value={i+1} className="bg-v-bg">{i+1}x</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">Categoria</label>
+                <select 
+                  className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm"
+                  value={newTx.category}
+                  onChange={e => setNewTx(p => ({ ...p, category: e.target.value }))}
+                >
+                  {categories.variavel.map(c => <option key={c} value={c} className="bg-v-bg">{c}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="v-eyebrow pl-1">Data da Compra</label>
+                <input 
+                  type="date"
+                  className="w-full bg-white/5 border border-v-border rounded-xl p-3 text-sm"
+                  value={newTx.date}
+                  onChange={e => setNewTx(p => ({ ...p, date: e.target.value }))}
+                />
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button 
+                  onClick={async () => {
+                    if (!newTx.description || !newTx.amount) return;
+                    await onAddTransaction(newTx, activeCard);
+                    setIsAddingTx(false);
+                    setNewTx({ description: '', amount: 0, category: 'Outros', date: format(new Date(), 'yyyy-MM-dd'), installmentsTotal: 1 });
+                  }}
+                  className="v-btn-primary flex-1 py-4"
+                >
+                  Confirmar Compra
+                </button>
+                <button onClick={() => setIsAddingTx(false)} className="px-6 border border-v-border rounded-xl text-xs font-black uppercase">Cancelar</button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Custom Delete Confirmation Modal */}
+      {txToDelete && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setTxToDelete(null)} />
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full max-w-sm v-panel p-8 text-center">
+            <div className="w-16 h-16 bg-danger/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Trash2 className="w-8 h-8 text-danger" />
+            </div>
+            <h3 className="text-xl font-black mb-2">Excluir Transação?</h3>
+            <p className="text-sm text-v-muted font-bold mb-8">
+              {txToDelete.installmentsTotal > 1 
+                ? `Esta é uma compra parcelada (${txToDelete.installmentsTotal}x). Todas as parcelas vinculadas a este grupo serão removidas permanentemente.`
+                : `Tem certeza que deseja remover "${txToDelete.description}"? Esta ação não pode ser desfeita.`}
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={async () => {
+                  const tx = txToDelete;
+                  setTxToDelete(null);
+                  await onDeleteTransaction(tx);
+                }}
+                className="w-full py-4 bg-danger text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-danger/90 transition-all"
+              >
+                Sim, Excluir Agora
+              </button>
+              <button 
+                onClick={() => setTxToDelete(null)}
+                className="w-full py-4 border border-v-border text-v-muted rounded-xl font-black uppercase tracking-widest text-xs hover:bg-white/5 transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </div>
   );
 }
 

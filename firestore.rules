@@ -99,5 +99,86 @@ service cloud.firestore {
     match /test/connection {
       allow read: if true;
     }
+
+    // --- CREDIT CARDS ---
+    match /creditCards/{cardId} {
+      function isValidCard(data) {
+        return data.get('userId', '') == request.auth.uid
+          && data.name is string && data.name.size() <= 100
+          && data.limitTotal is number
+          && data.closingDay is number && data.closingDay >= 1 && data.closingDay <= 31
+          && data.dueDay is number && data.dueDay >= 1 && data.dueDay <= 31
+          && data.color is string && data.color.size() <= 50;
+      }
+      
+      allow list: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      allow get: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      
+      allow create: if isSignedIn() && isValidCard(incoming());
+      
+      allow update: if isSignedIn() 
+        && existing().get('userId', '') == request.auth.uid 
+        && isValidCard(incoming())
+        && incoming().userId == existing().userId;
+        
+      allow delete: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+    }
+
+    // --- CREDIT TRANSACTIONS ---
+    match /creditTransactions/{txId} {
+      function isValidCreditTx(data) {
+        return data.get('userId', '') == request.auth.uid
+          && data.cardId is string
+          && data.description is string && data.description.size() <= 200
+          && data.amount is number
+          && data.category is string
+          && data.date is string
+          && data.installmentsTotal is number
+          && data.installmentNumber is number
+          && (data.groupId is string || !data.keys().hasAny(['groupId']))
+          && (data.invoiceMonth is number || !data.keys().hasAny(['invoiceMonth']))
+          && (data.invoiceYear is number || !data.keys().hasAny(['invoiceYear']))
+          && (data.createdAt is timestamp || !data.keys().hasAny(['createdAt']));
+      }
+      
+      allow list: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      allow get: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      
+      allow create: if isSignedIn() && isValidCreditTx(incoming());
+      
+      allow update: if isSignedIn() 
+        && existing().get('userId', '') == request.auth.uid 
+        && (
+          isValidCreditTx(incoming()) || 
+          incoming().diff(existing()).affectedKeys().hasOnly(['invoiceId'])
+        )
+        && incoming().userId == existing().userId;
+        
+      allow delete: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+    }
+
+    // --- INVOICES ---
+    match /invoices/{invoiceId} {
+      function isValidInvoice(data) {
+        return data.get('userId', '') == request.auth.uid
+          && data.cardId is string
+          && data.month is number
+          && data.year is number
+          && data.status in ['aberta', 'fechada', 'paga']
+          && data.totalAmount is number;
+      }
+      
+      allow list: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      allow get: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+      
+      allow create: if isSignedIn() && isValidInvoice(incoming());
+      
+      allow update: if isSignedIn() 
+        && existing().get('userId', '') == request.auth.uid 
+        && isValidInvoice(incoming())
+        && incoming().userId == existing().userId;
+        
+      allow delete: if isSignedIn() && existing().get('userId', '') == request.auth.uid;
+    }
   }
 }
